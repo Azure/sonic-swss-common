@@ -300,6 +300,7 @@ namespace swss {
 #define CFG_COPP_TRAP_TABLE_NAME                    "COPP_TRAP"
 #define CFG_COPP_GROUP_TABLE_NAME                   "COPP_GROUP"
 
+#define CFG_NEIGH_GLOBAL_TABLE                      "NEIGH_GLOBAL"
 #define CFG_FG_NHG                                  "FG_NHG"
 #define CFG_FG_NHG_PREFIX                           "FG_NHG_PREFIX"
 #define CFG_FG_NHG_MEMBER                           "FG_NHG_MEMBER"
