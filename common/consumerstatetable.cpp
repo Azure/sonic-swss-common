@@ -38,10 +38,11 @@ void ConsumerStateTable::pops(std::deque<KeyOpFieldsValuesTuple> &vkco, const st
 
     RedisCommand command;
     command.format(
-        "EVALSHA %s 3 %s %s: %s %d %s",
+        "EVALSHA %s 3 %s %s%s %s %d %s",
         m_shaPop.c_str(),
         getKeySetName().c_str(),
         getTableName().c_str(),
+        getTableNameSeparator().c_str(),
         getDelKeySetName().c_str(),
         POP_BATCH_SIZE,
         getStateHashPrefix().c_str());
