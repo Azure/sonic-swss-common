@@ -915,3 +915,65 @@ void DBConnector::del(const std::vector<std::string>& keys)
 
     RedisReply r(this, command, REDIS_REPLY_NIL);
 }
+
+/*******************************************************************************
+    / \   ___ _   _ _ __   ___
+   / _ \ / __| | | | '_ \ / __|
+  / ___ \\__ \ |_| | | | | (__
+ /_/   \_\___/\__, |_| |_|\___|
+              |___/
+*******************************************************************************/
+DBConnector_async::DBConnector_async(const std::string  &dbName,
+                                     void               *userCtxPtr) :
+    m_dbName(dbName),
+    m_dbId(SonicDBConfig::getDbId(m_dbName)),
+    m_sockAddr(SonicDBConfig::getDbSock(m_dbName)),
+    m_userCtxPtr(userCtxPtr)
+{
+    m_acPtr = redisAsyncConnectUnix(m_sockAddr.c_str());
+
+    if (m_acPtr->err != 0)
+    {
+        std::string errmsg("Unable to connect to redis: (" + std::to_string(m_acPtr->err) + ')');
+
+        if ((m_acPtr->errstr != nullptr) && (m_acPtr->errstr[0] != '\0'))
+             errmsg += " " + std::string(m_acPtr->errstr);
+
+        redisAsyncFree(m_acPtr);
+        m_acPtr = nullptr;
+
+        throw std::system_error(std::make_error_code(errc::address_not_available), errmsg);
+    }
+
+    m_acPtr->data = this;
+
+    command(nullptr, nullptr, "SELECT %d", m_dbId);
+}
+
+DBConnector_async::~DBConnector_async()
+{
+    if (m_acPtr != nullptr)
+    {
+        // We can't use redisAsyncFree() here because there may
+        // be pending messages to be sent or received. redisAsyncDisconnect()
+        // will ensure that all pending messages are processed before the
+        // context gets deleted.
+        redisAsyncDisconnect(m_acPtr);
+        m_acPtr = nullptr;
+    }
+}
+
+int DBConnector_async::command(redisCallbackFn *cb_func_p, void *cb_data_p, const char *format_p, ...)
+{
+    va_list ap;
+    int status;
+    va_start(ap, format_p);
+    status = redisvAsyncCommand(m_acPtr, cb_func_p, cb_data_p, format_p, ap);
+    va_end(ap);
+    return status;
+}
+
+int DBConnector_async::formatted_command(redisCallbackFn *cb_func_p, void *cb_data_p, const char *cmd_p, size_t len)
+{
+    return redisAsyncFormattedCommand(m_acPtr, cb_func_p, cb_data_p, cmd_p, len);
+}

@@ -9,6 +9,7 @@
 #include <mutex>
 
 #include <hiredis/hiredis.h>
+#include <hiredis/async.h>      // redisAsyncContext
 #include "rediscommand.h"
 #include "redisreply.h"
 #define EMPTY_NAMESPACE std::string()
@@ -289,5 +290,148 @@ void DBConnector::hmset(const std::string &key, InputIterator start, InputIterat
     RedisReply r(this, shmset, REDIS_REPLY_STATUS);
 }
 
-}
+
+
+/*******************************************************************************
+    / \   ___ _   _ _ __   ___
+   / _ \ / __| | | | '_ \ / __|
+  / ___ \\__ \ |_| | | | | (__
+ /_/   \_\___/\__, |_| |_|\___|
+              |___/
+*******************************************************************************/
+
+/**
+ * @brief   This uses hiredis asynchronous APIs (hiredis/async.h) to connect
+ *          to the REDIS server.
+ *
+ * @details Asyncronous architecture means that the application is designed
+ *          around an event loop that calls callback functions for each event.
+ *          The hiredis library provides a number of adapters for 3rd party
+ *          event loop libraries such as GLib, libevent, qt, etc.
+ *          Ref: <a href="https://github.com/redis/hiredis/tree/master/adapters">hiredis/adapters/[*.h]</a>
+ *
+ *          No additional thread is created when using the async hiredis APIs.
+ *          The hiredis context is simply "hooked up" to the event loop and
+ *          that allows the event loop to dispatch the "events" (i.e. replies
+ *          from the REDIS server) to their corresponding callback functions.
+ */
+class DBConnector_async
+{
+public:
+    /**
+     * @brief Asynchronous Connector object to the REDIS server.
+     *
+     * @param p_dbName Name of the DB we want to connect to (e.g. CONFIG_DB,
+     *                  APPL_DB, ...)
+     *
+     * @param userCtxPtr Optional user context (future use).
+     */
+    DBConnector_async(const std::string &dbName,
+                      void              *userCtxPtr=nullptr);
+    ~DBConnector_async();
+
+    /**
+     * @brief Get the hiredis context
+     *
+     * @return Return the hiredis async connection context. This API should be
+     *         used when your application needs to hook up the hiredis context
+     *         to the event loop. For example, if your application uses the
+     *         GLib main loop, you would hook up the hiredis context as in the
+     *         example below:
+     *
+     * @code
+     *  // --------------------------------------------------------------------
+     *  // Example showing how to hook up the hiredis context retrived
+     *  // from a DBConnector_async object to a GLib main event loop.
+     *  --------------------------------------------------------------------
+     *  #include <glib.h>                   // g_main_context_default()
+     *  #include <hiredis/adapters/glib.h>  // redis_source_new()
+     *  #include "dbconnector.h"            // class DBConnector_async
+     *
+     *  GMainContext * main_ctx_p = g_main_context_default();
+     *  GMainLoop    * loop_p     = g_main_loop_new(main_ctx_p, FALSE);
+     *  .
+     *  .
+     *
+     *  DBConnector_async  db("APPL_DB");
+     *  .
+     *  .
+     *
+     *  // Hook up hiredis context to GLib main loop
+     *  g_source_attach(redis_source_new(db.context()), main_ctx_p);
+     *  .
+     *  .
+     *
+     *  g_main_loop_run(loop_p);
+     *
+     * @endcode
+     *
+     */
+    redisAsyncContext *context() const { return m_acPtr; }
+
+    /**
+     * @brief Return the user context that was provided in the constructor.
+     *
+     * @return User context pointer.
+     */
+    void *getUserCtx() const { return m_userCtxPtr; }
+
+    /**
+     * @brief Get the DB name (e.g. "CONFIG_DB", "APPL_DB", etc.). This is the
+     *        same name that was provided to the constructor.
+     *
+     * @return The DB name associated with this connector.
+     */
+    const char *getDbName() const { return m_dbName.c_str(); }
+
+    /**
+     * @brief Get the DB ID (e.g. 0 for "APPL_DB", 4 for "CONFIG_DB", etc.)
+     *
+     * @return The DB ID associated with this connector.
+     */
+    int getDbId() const { return m_dbId; }
+
+    /**
+     * @brief Get the socket address associated with this connector.
+     *
+     * @return The Unix Domain Socket name.
+     */
+    const char *getSockAddr() const { return m_sockAddr.c_str(); }
+
+    /**
+     * @brief Invoke a REDIS a command
+     *
+     * @param cb_func_p Callback function to be invoked when reply is received
+     * @param cb_data_p User data passed to the callback function
+     * @param format A format string similar to printf(), but specific to
+     *               hiredis. For more info refer to the documentation for <a
+     *               href="https://github.com/redis/hiredis/blob/master/hiredis.c#L531">redisFormatCommand()</a>.
+     *
+     * @return 0 on success, otherwise the status returned by
+     *         redisvAsyncCommand()
+     */
+    int command(redisCallbackFn *cb_func_p, void *cb_data_p, const char *format, ...);
+
+    /**
+     * @brief Invoke a REDIS a command
+     *
+     * @param cb_func_p Callback function to be invoked when reply is received
+     * @param cb_data_p User data passed to the callback function
+     * @param cmd A formatted command to be sent to the REDIS server
+     * @param len The length of %cmd
+     *
+     * @return 0 on success, otherwise the status returned by
+     *         redisAsyncFormattedCommand()
+     */
+    int formatted_command(redisCallbackFn *cb_func_p, void *cb_data_p, const char *cmd_p, size_t len);
+
+private:
+    const std::string   m_dbName;
+    const int           m_dbId = -1;
+    std::string         m_sockAddr;
+    redisAsyncContext  *m_acPtr = nullptr;
+    void               *m_userCtxPtr = nullptr;
+};
+
+} // namespace swss
 #endif

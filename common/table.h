@@ -259,5 +259,87 @@ public:
     std::string getStateHashPrefix() const { return "_"; }
 };
 
-}
+
+/*******************************************************************************
+    / \   ___ _   _ _ __   ___
+   / _ \ / __| | | | '_ \ / __|
+  / ___ \\__ \ |_| | | | | (__
+ /_/   \_\___/\__, |_| |_|\___|
+              |___/
+*******************************************************************************/
+/**
+ * @brief Use hiredis async APIs provided by a DBConnector_async object to
+ *        perform asynchronous Table operations with the REDIS server.
+ *
+ */
+class Table_async : public TableBase {
+public:
+    /**
+     * @brief Provides asynchronous access to a Table in the REDIS DB.
+     *
+     * @param dbconn_r      Asynchronous DB connector object
+     * @param table_name_r  Name of the Table. E.g. "CONFIG_DB", "APPL_DB",
+     *                      etc.
+     */
+    Table_async(DBConnector_async & dbconn_r, const std::string & table_name_r);
+    ~Table_async();
+
+    /**
+     * @brief Perform a HDEL REDIS DB operation
+     *
+     * @param cb_func_p Callback function invoked when the HDEL REPLY is
+     *                  received from the REDIS server
+     * @param cb_data_p User data passed to the callback function
+     * @param key_r     Key to be accessed in the Table
+     * @param field_r   Field to HDEL
+     *
+     * @return The value returned by redisAsyncFormattedCommand(). Typically,
+     *         that would be REDIS_OK=0 on success, and REDIS_ERR=-1 otherwise.
+     */
+    int hdel(redisCallbackFn   * cb_func_p,
+             void              * cb_data_p,
+             const std::string & key_r,
+             const std::string & field_r);
+
+    /**
+     * @brief Perform a HGET REDIS DB operation
+     *
+     * @param cb_func_p Callback function invoked when the HGET REPLY is
+     *                  received from the REDIS server
+     * @param cb_data_p User data passed to the callback function
+     * @param key_r     Key to be accessed in the Table
+     * @param field_r   Field to HGET
+     *
+     * @return The value returned by redisAsyncFormattedCommand(). Typically,
+     *         that would be REDIS_OK=0 on success, and REDIS_ERR=-1 otherwise.
+     */
+    int hget(redisCallbackFn   * cb_func_p,
+             void              * cb_data_p,
+             const std::string & key_r,
+             const std::string & field_r);
+
+    /**
+     * @brief Perform a HSET REDIS DB operation
+     *
+     * @param cb_func_p Callback function invoked when the HSET REPLY is
+     *                  received from the REDIS server
+     * @param cb_data_p User data passed to the callback function
+     * @param key_r     Key to be accessed in the Table
+     * @param field_r   Field to HSET
+     * @param value_r   Value that the field will be HSET to.
+     *
+     * @return The value returned by redisAsyncFormattedCommand(). Typically,
+     *         that would be REDIS_OK=0 on success, and REDIS_ERR=-1 otherwise.
+     */
+    int hset(redisCallbackFn   * cb_func_p,
+             void              * cb_data_p,
+             const std::string & key_r,
+             const std::string & field_r,
+             const std::string & value_r);
+
+private:
+    DBConnector_async          & dbconn_rm;
+};
+
+} // namespace swss
 #endif
