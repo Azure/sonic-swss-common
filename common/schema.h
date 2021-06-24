@@ -40,6 +40,7 @@ namespace swss {
 #define APP_FDB_TABLE_NAME                "FDB_TABLE"
 #define APP_PFC_WD_TABLE_NAME             "PFC_WD_TABLE"
 #define APP_SWITCH_TABLE_NAME             "SWITCH_TABLE"
+#define APP_NEXT_HOP_GROUP_TABLE_NAME     "NEXT_HOP_GROUP_TABLE"
 
 #define APP_COPP_TABLE_NAME               "COPP_TABLE"
 #define APP_VRF_TABLE_NAME                "VRF_TABLE"
@@ -290,7 +291,7 @@ namespace swss {
 #define CFG_MCLAG_TABLE_NAME                        "MCLAG_DOMAIN"
 #define CFG_MCLAG_INTF_TABLE_NAME                   "MCLAG_INTERFACE"
 #define CFG_MCLAG_UNIQUE_IP_TABLE_NAME              "MCLAG_UNIQUE_IP"
-  
+
 #define CFG_PORT_STORM_CONTROL_TABLE_NAME           "PORT_STORM_CONTROL"
 
 #define CFG_RATES_TABLE_NAME                        "RATES"
