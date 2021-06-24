@@ -375,6 +375,17 @@ namespace swss {
 #define STATE_PORT_PERIPHERAL_TABLE                 "PORT_PERIPHERAL_TABLE"
 #define STATE_BUFFER_POOL_TABLE_NAME                "BUFFER_POOL_TABLE"
 #define STATE_BUFFER_PROFILE_TABLE_NAME             "BUFFER_PROFILE_TABLE"
+
+
+/* event management data */
+#define EVENT_PUBSUB_TABLE_NAME           "EVENTPUBSUB"
+#define EVENT_HISTORY_TABLE_NAME          "EVENT"
+#define EVENT_CURRENT_ALARM_TABLE_NAME    "ALARM"
+#define EVENT_STATS_TABLE_NAME            "EVENT_STATS"
+#define EVENT_ALARM_STATS_TABLE_NAME      "ALARM_STATS"
+/* event profile table */
+#define EVENT_EVPROFILE_TABLE_NAME        "EVPROFILE_TABLE"
+
 /***** MISC *****/
 
 #define IPV4_NAME "IPv4"
