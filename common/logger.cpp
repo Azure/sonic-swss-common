@@ -141,11 +141,11 @@ void Logger::linkToDb(const std::string &dbName, const PriorityChangeNotify& pri
     linkToDbWithOutput(dbName, prioNotify, defPrio, swssOutputNotify, "SYSLOG");
 }
 
-void Logger::linkToDbNative(const std::string &dbName)
+void Logger::linkToDbNative(const std::string &dbName, const std::string& defPrio)
 {
     auto& logger = getInstance();
 
-    linkToDb(dbName, swssPrioNotify, "NOTICE");
+    linkToDb(dbName, swssPrioNotify, defPrio);
     logger.m_settingThread.reset(new std::thread(&Logger::settingThread, &logger));
 }
 
