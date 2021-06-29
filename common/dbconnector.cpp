@@ -419,11 +419,11 @@ RedisContext::RedisContext(const RedisContext &other)
     const char *unixPath = octx->unix_sock.path;
     if (unixPath)
     {
-        initContext(unixPath, octx->timeout);
+        initContext(unixPath, octx->connect_timeout);
     }
     else
     {
-        initContext(octx->tcp.host, octx->tcp.port, octx->timeout);
+        initContext(octx->tcp.host, octx->tcp.port, octx->connect_timeout);
     }
 }
 
