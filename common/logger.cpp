@@ -331,12 +331,12 @@ std::string Logger::outputToString(Logger::Output output)
 
 Logger::ScopeLogger::ScopeLogger(int line, const char *fun) : m_line(line), m_fun(fun)
 {
-    swss::Logger::getInstance().write(swss::Logger::SWSS_DEBUG, ":> %s: enter", m_fun);
+    swss::Logger::getInstance().write(swss::Logger::SWSS_DEBUG, "d:> %s: enter", m_fun);
 }
 
 Logger::ScopeLogger::~ScopeLogger()
 {
-    swss::Logger::getInstance().write(swss::Logger::SWSS_DEBUG, ":< %s: exit", m_fun);
+    swss::Logger::getInstance().write(swss::Logger::SWSS_DEBUG, "d:< %s: exit", m_fun);
 }
 
 Logger::ScopeTimer::ScopeTimer(int line, const char *fun, const char *fmt, ...) :
@@ -361,7 +361,7 @@ Logger::ScopeTimer::~ScopeTimer()
 
     double duration = std::chrono::duration_cast<second_t>(end - m_start).count();
 
-    Logger::getInstance().write(swss::Logger::SWSS_NOTICE, ":- %s: %s took %lf sec", m_fun, m_msg.c_str(), duration);
+    Logger::getInstance().write(swss::Logger::SWSS_NOTICE, "n:- %s: %s took %lf sec", m_fun, m_msg.c_str(), duration);
 }
 
 };
