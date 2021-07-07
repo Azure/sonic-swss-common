@@ -209,6 +209,14 @@ void SonicDBConfig::validateNamespace(const string &netns)
     }
 }
 
+unordered_map<std::string, std::unordered_map<std::string, SonicDBInfo>> SonicDBConfig::getInstanceList(const std::string &netns)
+{
+    if (!m_init)
+        initialize(DEFAULT_SONIC_DB_CONFIG_FILE);
+    validateNamespace(netns);
+    return m_db_info;
+}
+
 SonicDBInfo& SonicDBConfig::getDbInfo(const std::string &dbName, const std::string &netns)
 {
     std::lock_guard<std::recursive_mutex> guard(m_db_info_mutex);
