@@ -1,8 +1,10 @@
 #pragma once
-#include <string.h>
+#include <cstring>
 #include <utility>
 #include <tuple>
 #include <vector>
+#include <string>
+#include <stdexcept>
 
 namespace swss {
 
