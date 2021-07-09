@@ -29,6 +29,11 @@ public:
         return m_ip.family == AF_INET;
     }
 
+    inline bool isV6() const
+    {
+        return m_ip.family == AF_INET6;
+    }
+
     inline bool isZero() const
     {
         unsigned char zerobuf[16] = { 0 };
