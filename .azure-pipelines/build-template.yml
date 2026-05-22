@@ -79,10 +79,9 @@ jobs:
       ${{ else }}:
         artifact: common-lib.${{ parameters.arch }}
       patterns: |
-        target/debs/${{ parameters.debian_version }}/libyang-*_1.0*.deb
-        target/debs/${{ parameters.debian_version }}/libyang_1.0*.deb
-        target/debs/${{ parameters.debian_version }}/libyang-cpp_*.deb
-        target/debs/${{ parameters.debian_version }}/python3-yang_*.deb
+        target/debs/${{ parameters.debian_version }}/libyang3_*.deb
+        target/debs/${{ parameters.debian_version }}/libyang-dev_3*.deb
+        target/debs/${{ parameters.debian_version }}/python3-libyang*.deb
     displayName: "Download libyang from ${{ parameters.arch }} common lib"
     condition: ne('${{ parameters.debian_version }}', 'trixie')
   - task: DownloadPipelineArtifact@2
@@ -90,18 +89,17 @@ jobs:
       source: specific
       project: build
       pipeline: Azure.sonic-buildimage.common_libs
-      runVersion: 'specific'
-      pipelineId: '926659'
+      runVersion: 'latestFromBranch'
+      runBranch: 'refs/heads/$(BUILD_BRANCH)'
       path: $(Build.ArtifactStagingDirectory)/download
       ${{ if eq(parameters.arch, 'amd64') }}:
         artifact: common-lib
       ${{ else }}:
         artifact: common-lib.${{ parameters.arch }}
       patterns: |
-        target/debs/${{ parameters.debian_version }}/libyang-*_1.0*.deb
-        target/debs/${{ parameters.debian_version }}/libyang_1.0*.deb
-        target/debs/${{ parameters.debian_version }}/libyang-cpp_*.deb
-        target/debs/${{ parameters.debian_version }}/python3-yang_*.deb
+        target/debs/${{ parameters.debian_version }}/libyang3_*.deb
+        target/debs/${{ parameters.debian_version }}/libyang-dev_3*.deb
+        target/debs/${{ parameters.debian_version }}/python3-libyang*.deb
         target/debs/${{ parameters.debian_version }}/libpcre*.deb
     displayName: "Download libyang from ${{ parameters.arch }} common lib"
     condition: eq('${{ parameters.debian_version }}', 'trixie')

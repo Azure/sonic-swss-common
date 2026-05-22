@@ -53,62 +53,6 @@ stages:
 
   jobs:
   - job:
-    displayName: "amd64/ubuntu-latest"
-    condition: false
-    pool:
-      vmImage: 'ubuntu-latest'
-
-    steps:
-    - script: |
-        sudo apt-get update
-        sudo apt-get install -y make libtool m4 autoconf dh-exec debhelper cmake pkg-config nlohmann-json3-dev \
-                         libhiredis-dev libnl-3-dev libnl-genl-3-dev libnl-route-3-dev libnl-nf-3-dev swig3.0 \
-                         libpython2.7-dev libboost-dev libboost-serialization-dev uuid-dev libzmq3-dev
-        sudo apt-get install -y sudo
-        sudo apt-get install -y redis-server redis-tools
-        sudo apt-get install -y python3-pip
-        sudo pip3 install pytest
-        sudo apt-get install -y python
-        sudo apt-get install cmake libgtest-dev libgmock-dev libyang-dev
-        cd /usr/src/gtest && sudo cmake . && sudo make
-        ARCH=$(dpkg --print-architecture)
-        set -x
-        sudo curl -fsSL -o /usr/local/bin/bazel \
-            https://github.com/bazelbuild/bazelisk/releases/latest/download/bazelisk-linux-${ARCH}
-        sudo chmod 755 /usr/local/bin/bazel
-      displayName: "Install dependencies"
-    - task: DownloadPipelineArtifact@2
-      inputs:
-        source: specific
-        project: build
-        pipeline: 142
-        artifact: sonic-buildimage.vs
-        runVersion: 'latestFromBranch'
-        runBranch: 'refs/heads/$(BUILD_BRANCH)'
-        path: $(Build.ArtifactStagingDirectory)/download
-        patterns: |
-          target/python-wheels/${{ parameters.debian_version }}/sonic_yang_mgmt-1.0-py3-none-any.whl
-          target/python-wheels/${{ parameters.debian_version }}/sonic_yang_models-1.0-py3-none-any.whl
-      displayName: "Download yang wheel from latest sonic-buildimage build"
-    - script: |
-        set -ex
-        sudo pip3 install ./download/target/python-wheels/${{ parameters.debian_version }}/sonic_yang_mgmt-1.0-py3-none-any.whl \
-                          ./download/target/python-wheels/${{ parameters.debian_version }}/sonic_yang_models-1.0-py3-none-any.whl
-      workingDirectory: $(Build.ArtifactStagingDirectory)
-      displayName: "Install yang wheel"
-    - script: |
-        ./autogen.sh
-        dpkg-buildpackage -us -uc -b -j$(nproc) && cp ../*.deb .
-      displayName: "Compile sonic swss common"
-    - script: |
-        bazel build //...
-        bazel test //...
-      displayName: "Compile and test all Bazel targets"
-    - publish: $(System.DefaultWorkingDirectory)/
-      artifact: sonic-swss-common.amd64.ubuntu20_04
-      displayName: "Archive swss common debian packages"
-
-  - job:
     displayName: "amd64/ubuntu-22.04"
     pool:
       vmImage: 'ubuntu-22.04'
@@ -142,17 +86,22 @@ stages:
         path: $(Build.ArtifactStagingDirectory)/download
         artifact: common-lib
         patterns: |
-          target/debs/${{ parameters.debian_version }}/libyang-*_1.0*.deb
-          target/debs/${{ parameters.debian_version }}/libyang_1.0*.deb
-          target/debs/${{ parameters.debian_version }}/libyang-cpp_*.deb
-          target/debs/${{ parameters.debian_version }}/python3-yang_*.deb
+          target/debs/${{ parameters.debian_version }}/libyang3_*.deb
+          target/debs/${{ parameters.debian_version }}/libyang-dev_3*.deb
       displayName: "Download yang deb from amd64 common lib"
     - script: |
         set -ex
-        sudo dpkg -i $(Build.ArtifactStagingDirectory)/download/target/debs/${{ parameters.debian_version }}/libyang_1.0*.deb \
-                     $(Build.ArtifactStagingDirectory)/download/target/debs/${{ parameters.debian_version }}/libyang-*_1.0*.deb \
-                     $(Build.ArtifactStagingDirectory)/download/target/debs/${{ parameters.debian_version }}/libyang-cpp_*.deb \
-                     $(Build.ArtifactStagingDirectory)/download/target/debs/${{ parameters.debian_version }}/python3-yang_*.deb
+        sudo dpkg -i $(Build.ArtifactStagingDirectory)/download/target/debs/${{ parameters.debian_version }}/libyang3_*.deb \
+                     $(Build.ArtifactStagingDirectory)/download/target/debs/${{ parameters.debian_version }}/libyang-dev_3*.deb
+        # python3-libyang's bookworm .deb pins python3 (>= 3.11~, << 3.12) and
+        # won't install on Ubuntu 22.04 (python 3.10). Build the Python bindings
+        # from PyPI instead — they link against the libyang3 we just installed.
+        # Use --no-build-isolation with apt's python3-cffi to avoid jammy pip
+        # 22.0.2 picking up cffi 2.0.0 in its build env while Debian's older
+        # /usr/lib/python3/dist-packages/_cffi_backend.so still wins on sys.path
+        # (causing a "Version mismatch" Exception inside cffi at build time).
+        sudo apt-get install -y python3-cffi
+        sudo pip3 install --no-build-isolation 'libyang==3.3.0'
       workingDirectory: $(Build.ArtifactStagingDirectory)
       displayName: "Install yang deb from common lib"
     - task: DownloadPipelineArtifact@2
