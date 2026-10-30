@@ -7,7 +7,8 @@ dist_swss_DATA = \
     common/table_dump.lua \
     common/portcounter.lua \
     common/fdb_flush.lua \
-    common/fdb_flush.v2.lua
+    common/fdb_flush.v2.lua \
+    common/fdb_flush_scan.lua
 
 dist_swsscommon_DATA= common/database_config.json
 
