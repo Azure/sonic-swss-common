@@ -533,3 +533,69 @@ TEST_F(RedisAutoAuth, ExportedTcpCheckUsesNativePolicyWithoutOpeningThePassword)
     EXPECT_THROW(checkRedisTcpEndpoint("127.0.0.1", plainPort), RedisAuthError);
     EXPECT_NO_THROW(checkRedisTcpEndpoint("127.0.0.1", plainPort + 1));
 }
+
+TEST_F(RedisAutoAuth, InterruptibleSocketAuthenticatesAndReturnsBlockingCloexecDescriptor)
+{
+    const int fd = openRedisUnixSocketInterruptible(socketPath, 1000);
+    ASSERT_GE(fd, 0);
+    EXPECT_EQ(fcntl(fd, F_GETFL) & O_NONBLOCK, 0);
+    EXPECT_NE(fcntl(fd, F_GETFD) & FD_CLOEXEC, 0);
+    unique_ptr<redisContext, decltype(&redisFree)> context(redisConnectFd(fd), redisFree);
+    ASSERT_NE(context, nullptr);
+    auto *reply = static_cast<redisReply *>(redisCommand(context.get(), "ACL WHOAMI"));
+    ASSERT_NE(reply, nullptr);
+    ASSERT_NE(reply->str, nullptr);
+    EXPECT_EQ(string(reply->str, reply->len), "test-writer");
+    freeReplyObject(reply);
+    timeval timeout{};
+    socklen_t size = sizeof(timeout);
+    ASSERT_EQ(getsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, &size), 0);
+    EXPECT_EQ(timeout.tv_sec, 0);
+    EXPECT_EQ(timeout.tv_usec, 0);
+}
+
+TEST_F(RedisAutoAuth, InterruptibleSocketMatchesRequestedEndpointAlias)
+{
+    const string alias = temporary + "/alias.sock";
+    ASSERT_EQ(symlink(socketPath.c_str(), alias.c_str()), 0);
+    policy(0, alias);
+    const int fd = openRedisUnixSocketInterruptible(alias, 1000);
+    unlink(alias.c_str());
+    ASSERT_GE(fd, 0);
+    unique_ptr<redisContext, decltype(&redisFree)> context(redisConnectFd(fd), redisFree);
+    ASSERT_NE(context, nullptr);
+    auto *reply = static_cast<redisReply *>(redisCommand(context.get(), "ACL WHOAMI"));
+    ASSERT_NE(reply, nullptr);
+    ASSERT_NE(reply->str, nullptr);
+    EXPECT_EQ(string(reply->str, reply->len), "test-writer");
+    freeReplyObject(reply);
+}
+
+TEST_F(RedisAutoAuth, InterruptibleSocketCancellationRetainsSignalAndReturnsNoHandle)
+{
+    int signal[2];
+    ASSERT_EQ(pipe2(signal, O_CLOEXEC), 0);
+    ASSERT_EQ(write(signal[1], "x", 1), 1);
+    int32_t fd = 123;
+    auto result = SWSSRedisSocket_open_unix_interruptible(socketPath.c_str(), 1000, signal[0], &fd);
+    EXPECT_NE(result.exception, SWSSException_None);
+    EXPECT_EQ(fd, -1);
+    SWSSString_free(result.message);
+    SWSSString_free(result.location);
+    char byte = 0;
+    EXPECT_EQ(read(signal[0], &byte, 1), 1);
+    EXPECT_EQ(byte, 'x');
+    close(signal[0]);
+    close(signal[1]);
+}
+
+TEST_F(RedisAutoAuth, InterruptibleSocketAuthenticationFailureReturnsNoHandle)
+{
+    writeFile(SECRET, "wrong-password", 0400);
+    int32_t fd = 123;
+    auto result = SWSSRedisSocket_open_unix_interruptible(socketPath.c_str(), 1000, -1, &fd);
+    EXPECT_NE(result.exception, SWSSException_None);
+    EXPECT_EQ(fd, -1);
+    SWSSString_free(result.message);
+    SWSSString_free(result.location);
+}

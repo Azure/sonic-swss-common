@@ -27,6 +27,12 @@ namespace swss {
 int openRedisUnixSocket(const std::string &path, unsigned int connectTimeoutMs = 0,
                         unsigned int authTimeoutMs = 0);
 
+// As above, with one timeout for connect and AUTH. A readable/closed cancelFd
+// interrupts either phase; -1 disables cancellation. The caller retains cancelFd
+// until the call completes. Zero timeout means no timeout.
+int openRedisUnixSocketInterruptible(const std::string &path, unsigned int timeoutMs,
+                                     int cancelFd = -1);
+
 // Stream a native RDB snapshot over an authenticated Unix connection. The
 // destination is replaced atomically only after the full payload is received.
 void exportRedisRdb(const std::string &path, const std::string &destination,

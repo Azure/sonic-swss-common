@@ -5,6 +5,9 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/socket.h>
+#include <poll.h>
+#include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <limits>
 #include <errno.h>
@@ -35,6 +38,84 @@ struct AuthFd
 {
     int fd;
     ~AuthFd() { if (fd >= 0) close(fd); }
+};
+
+// Cancellation is a readable/closed descriptor supplied by the binding. The
+// native factory retains socket ownership and uses one budget for connect/AUTH.
+class RedisSocketWaiter
+{
+    using Clock = std::chrono::steady_clock;
+    int m_cancelFd;
+    bool m_limited;
+    Clock::time_point m_deadline;
+
+public:
+    RedisSocketWaiter(int cancelFd, unsigned int timeoutMs)
+        : m_cancelFd(cancelFd), m_limited(timeoutMs != 0),
+          m_deadline(Clock::now() + std::chrono::milliseconds(timeoutMs)) {}
+
+    void checkCancelled()
+    {
+        pollfd signal{m_cancelFd, POLLIN, 0};
+        int result;
+        do { result = poll(&signal, 1, 0); } while (result < 0 && errno == EINTR);
+        if (result < 0 || (signal.revents & POLLNVAL))
+            throw RedisDescriptorError(result < 0 ? errno : EBADF, generic_category(),
+                                       "Cannot poll Redis cancellation descriptor");
+        if (signal.revents)
+            throw system_error(make_error_code(errc::operation_canceled), "Redis connection cancelled");
+        if (m_limited && Clock::now() >= m_deadline)
+            throw system_error(make_error_code(errc::timed_out), "Redis connection timed out");
+    }
+
+    void wait(int fd, short events)
+    {
+        for (;;)
+        {
+            checkCancelled();
+            int timeout = -1;
+            if (m_limited)
+            {
+                const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    m_deadline - Clock::now()).count();
+                if (remaining < 0) continue;
+                timeout = static_cast<int>(std::min<long long>(remaining + 1, numeric_limits<int>::max()));
+            }
+            pollfd descriptors[] = {{fd, events, 0}, {m_cancelFd, POLLIN, 0}};
+            const int result = poll(descriptors, 2, timeout);
+            if (result < 0 && errno == EINTR) continue;
+            if (result < 0)
+                throw RedisDescriptorError(errno, generic_category(), "Cannot poll Redis socket");
+            // Cancellation wins when both descriptors become ready together.
+            checkCancelled();
+            if (descriptors[0].revents & POLLNVAL)
+                throw RedisDescriptorError(EBADF, generic_category(), "Invalid Redis socket");
+            if (descriptors[0].revents) return;
+        }
+    }
+
+    redisReply *readReply(redisContext *context)
+    {
+        int flushed = 0;
+        while (!flushed)
+        {
+            checkCancelled();
+            if (redisBufferWrite(context, &flushed) != REDIS_OK)
+                throw RedisError("Redis authentication write failed", context);
+            if (!flushed) wait(context->fd, POLLOUT);
+        }
+        for (;;)
+        {
+            checkCancelled();
+            void *reply = nullptr;
+            if (redisGetReplyFromReader(context, &reply) != REDIS_OK)
+                throw RedisError("Redis authentication reply failed", context);
+            if (reply) return static_cast<redisReply *>(reply);
+            wait(context->fd, POLLIN);
+            if (redisBufferRead(context) != REDIS_OK)
+                throw RedisError("Redis authentication read failed", context);
+        }
+    }
 };
 
 void checkAuthFile(int fd, bool directory, bool secret = false)
@@ -71,7 +152,7 @@ string readAuthFile(int fd, size_t maximum)
     return value;
 }
 
-void authenticateLocalWriter(redisContext *context)
+void authenticateLocalWriter(redisContext *context, RedisSocketWaiter *waiter = nullptr)
 {
     // This fixed startup-owned file authorizes credential delivery. A caller's
     // database_config.json, environment and command line cannot redirect it.
@@ -150,9 +231,16 @@ void authenticateLocalWriter(redisContext *context)
     string secret = readAuthFile(secretFile.fd, 128);
     const char *argv[] = {"AUTH", username.data(), secret.data()};
     const size_t lengths[] = {4, username.size(), secret.size()};
-    auto *reply = static_cast<redisReply *>(redisCommandArgv(context, 3, argv, lengths));
+    redisReply *reply = nullptr;
+    const int appended = waiter ? redisAppendCommandArgv(context, 3, argv, lengths) : REDIS_OK;
+    if (!waiter) reply = static_cast<redisReply *>(redisCommandArgv(context, 3, argv, lengths));
     volatile char *bytes = &secret[0];
     for (size_t i = 0; i < secret.size(); ++i) bytes[i] = 0;
+    if (waiter)
+    {
+        if (appended != REDIS_OK) throw RedisError("Cannot prepare Redis authentication", context);
+        reply = waiter->readReply(context);
+    }
     if (reply == nullptr) throw RedisError("Redis authentication transport failure", context);
     const bool accepted = reply->type == REDIS_REPLY_STATUS && reply->str &&
                           reply->len == 2 && memcmp(reply->str, "OK", 2) == 0;
@@ -160,7 +248,7 @@ void authenticateLocalWriter(redisContext *context)
     if (!accepted) throw RedisAuthError("Redis writer authentication failed");
 }
 
-void finishConnection(redisContext *&context, const string& errorPrefix)
+void finishConnection(redisContext *&context, const string& errorPrefix, RedisSocketWaiter *waiter = nullptr)
 {
     if (!context) throw bad_alloc();
     try
@@ -179,7 +267,7 @@ void finishConnection(redisContext *&context, const string& errorPrefix)
             const int error = errno;
             throw RedisDescriptorError(error, generic_category(), "fcntl(F_SETFD, FD_CLOEXEC) failed on Redis connection");
         }
-        authenticateLocalWriter(context);
+        authenticateLocalWriter(context, waiter);
     }
     catch (...)
     {
@@ -736,6 +824,45 @@ int swss::openRedisUnixSocket(const string &path, unsigned int connectTimeoutMs,
         if (redisSetTimeout(context, noTimeout) != REDIS_OK)
             throw RedisError("Cannot clear Redis authentication timeout", context);
         int fd = fcntl(context->fd, F_DUPFD_CLOEXEC, 0);
+        if (fd < 0)
+            throw RedisDescriptorError(errno, generic_category(), "Cannot duplicate Redis socket");
+        redisFree(context);
+        return fd;
+    }
+    catch (...)
+    {
+        if (context) redisFree(context);
+        throw;
+    }
+}
+
+int swss::openRedisUnixSocketInterruptible(const string &path, unsigned int timeoutMs, int cancelFd)
+{
+    if (path.empty() || path.front() != '/' || path.find('\0') != string::npos)
+        throw invalid_argument("Redis Unix socket path must be absolute");
+    if (cancelFd < -1)
+        throw invalid_argument("Redis cancellation descriptor must be -1 or valid");
+    RedisSocketWaiter waiter(cancelFd, timeoutMs);
+    waiter.checkCancelled();
+    redisContext *context = redisConnectUnixNonBlock(path.c_str());
+    if (!context) throw bad_alloc();
+    try
+    {
+        if (!context->err)
+        {
+            waiter.wait(context->fd, POLLOUT);
+            int error = 0;
+            socklen_t length = sizeof(error);
+            if (getsockopt(context->fd, SOL_SOCKET, SO_ERROR, &error, &length) != 0)
+                throw RedisDescriptorError(errno, generic_category(), "Cannot check Redis connection");
+            if (error) throw system_error(error, generic_category(), "Cannot connect to Redis Unix socket");
+        }
+        finishConnection(context, "Unable to connect to Redis Unix socket - ", &waiter);
+        waiter.checkCancelled();
+        const int flags = fcntl(context->fd, F_GETFL);
+        if (flags < 0 || fcntl(context->fd, F_SETFL, flags & ~O_NONBLOCK) < 0)
+            throw RedisDescriptorError(errno, generic_category(), "Cannot restore blocking Redis socket");
+        const int fd = fcntl(context->fd, F_DUPFD_CLOEXEC, 0);
         if (fd < 0)
             throw RedisDescriptorError(errno, generic_category(), "Cannot duplicate Redis socket");
         redisFree(context);

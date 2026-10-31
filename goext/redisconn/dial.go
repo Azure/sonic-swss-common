@@ -46,10 +46,22 @@ func milliseconds(timeout time.Duration) C.uint32_t {
 	return C.uint32_t(value)
 }
 
-// DialUnix returns an authenticated socket without selecting a logical database.
-// The C++ implementation owns policy parsing, credential access and AUTH.
-func DialUnix(ctx context.Context, path string, timeout time.Duration) (net.Conn, error) {
+// contextError handles a native timeout racing the context timer callback.
+func contextError(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if deadline, ok := ctx.Deadline(); ok && !time.Now().Before(deadline) {
+		return context.DeadlineExceeded
+	}
+	return nil
+}
+
+// DialUnix returns an authenticated socket without selecting a logical database.
+// C++ owns socket creation, policy parsing, credential access and AUTH. timeout
+// bounds the complete connection/authentication operation; zero is unlimited.
+func DialUnix(ctx context.Context, path string, timeout time.Duration) (net.Conn, error) {
+	if err := contextError(ctx); err != nil {
 		return nil, err
 	}
 	if strings.IndexByte(path, 0) >= 0 {
@@ -64,16 +76,58 @@ func DialUnix(ctx context.Context, path string, timeout time.Duration) (net.Conn
 			timeout = remaining
 		}
 	}
+	var timeoutAt time.Time
+	if timeout > 0 {
+		timeoutAt = time.Now().Add(timeout)
+	}
+
+	// Closing the pipe's writer wakes native poll during connect or AUTH. No
+	// socket descriptor is shared with the watcher. Join it before releasing the
+	// pipe or returning, including when success and cancellation race.
+	cancelFd := C.int32_t(-1)
+	var done, stopped chan struct{}
+	if ctx.Done() != nil {
+		reader, writer, err := os.Pipe()
+		if err != nil {
+			return nil, err
+		}
+		defer reader.Close()
+		defer writer.Close()
+		cancelFd = C.int32_t(reader.Fd())
+		done, stopped = make(chan struct{}), make(chan struct{})
+		go func() {
+			defer close(stopped)
+			select {
+			case <-ctx.Done():
+				writer.Close()
+			case <-done:
+			}
+		}()
+	}
 	nativePath := C.CString(path)
 	defer C.free(unsafe.Pointer(nativePath))
-	var fd C.int32_t
-	if err := nativeError(C.SWSSRedisSocket_open_unix(nativePath, milliseconds(timeout), milliseconds(timeout), &fd)); err != nil {
+	fd := C.int32_t(-1)
+	err := nativeError(C.SWSSRedisSocket_open_unix_interruptible(nativePath, milliseconds(timeout), cancelFd, &fd))
+	if done != nil {
+		close(done)
+		<-stopped
+	}
+	var file *os.File
+	if fd >= 0 {
+		file = os.NewFile(uintptr(fd), "Redis Unix socket")
+		defer file.Close()
+	}
+	if contextErr := contextError(ctx); contextErr != nil {
+		return nil, contextErr
+	}
+	if err != nil {
+		if !timeoutAt.IsZero() && !time.Now().Before(timeoutAt) {
+			return nil, &net.OpError{Op: "dial", Net: "unix", Err: os.ErrDeadlineExceeded}
+		}
 		return nil, err
 	}
-	file := os.NewFile(uintptr(fd), "Redis Unix socket")
-	defer file.Close()
-	if err := ctx.Err(); err != nil {
-		return nil, err
+	if file == nil {
+		return nil, errors.New("Native Redis connection returned no socket")
 	}
 	return net.FileConn(file)
 }

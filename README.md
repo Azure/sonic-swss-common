@@ -135,11 +135,17 @@ reconnect. Use DBConnector, SonicV2Connector or ConfigDBConnector directly when
 their existing operations meet the caller's needs.
 
 The Go package `goext/redisconn` wraps the C API and returns a `net.Conn` from
-the same native Unix factory. `WrapDialer` preserves TCP/TLS and custom TCP
-dialers, but rejects custom Unix dialers and TLS on Unix sockets. Cancellation
-is checked before and after the blocking native call; immediate cancellation
-within that call remains a review limitation. Rust exposes the owned native
-socket as `OwnedFd`. These bindings do not read policy or credential files.
+`openRedisUnixSocketInterruptible`. The native factory uses nonblocking socket
+I/O and waits for either Redis or a cancellation descriptor during connect and
+AUTH. One timeout covers both phases. Go signals cancellation through a pipe
+and joins its watcher before returning; native socket ownership and credential
+handling remain in C++. Cancelled or expired contexts return `context.Canceled`
+or `context.DeadlineExceeded`, including when a native error races the context
+timer. Cancelling after a successful dial leaves the returned connection usable.
+
+`WrapDialer` preserves TCP/TLS and custom TCP dialers, but rejects custom Unix
+dialers and TLS on Unix sockets. The existing Unix factory and Rust `OwnedFd`
+interface are unchanged. These bindings do not read policy or credential files.
 
 `checkRedisTcpEndpoint` applies the native policy's rejection of selected TCP
 writer endpoints before a raw client's normal TCP/TLS dialing. Protected TCP

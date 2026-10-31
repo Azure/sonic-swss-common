@@ -13,6 +13,10 @@ extern "C" {
 // On success the caller owns *outFd. On failure *outFd is -1.
 SWSSResult SWSSRedisSocket_open_unix(const char *path, uint32_t connectTimeoutMs,
                                     uint32_t authTimeoutMs, int32_t *outFd);
+// One budget for connect/AUTH. The caller retains cancelFd (-1 disables it);
+// readability or closure interrupts the operation. outFd has the same ownership.
+SWSSResult SWSSRedisSocket_open_unix_interruptible(const char *path, uint32_t timeoutMs,
+                                                 int32_t cancelFd, int32_t *outFd);
 SWSSResult SWSSRedisSocket_check_tcp(const char *host, int32_t port);
 
 SWSSResult SWSSSonicDBConfig_initialize(const char *path);
