@@ -106,10 +106,10 @@ def test_existing_python_apis_authenticate(protected_redis):
     pipe = swss.ConfigDBPipeConnector()
     pipe.connect(wait_for_init=False, retry_on=False)
     pipe.mod_config({"AUTO_AUTH": {"pipeline": {"field": "value"}}})
-    control.select(6)
+    control.execute_command("SELECT", 6)
     for key in ("DIRECT", "CHILD", "INTERFACE", "SONIC"):
         assert control.hget(key, "field") == b"value"
-    control.select(4)
+    control.execute_command("SELECT", 4)
     assert control.hget("AUTO_AUTH|config", "field") == b"value"
     assert control.hget("AUTO_AUTH|pipeline", "field") == b"value"
 
@@ -210,10 +210,15 @@ for path in sys.argv[1:]:
         secondary_socket.unlink(missing_ok=True)
 
 
-def test_native_pool_preserves_binary_transactions_and_reconnect(protected_redis):
+@pytest.mark.parametrize("timeouts", [
+    {},
+    {"socket_timeout": 0.5},
+    {"socket_timeout": 0.5, "socket_connect_timeout": 0.25},
+])
+def test_native_pool_preserves_binary_transactions_and_reconnect(protected_redis, timeouts):
     from swsscommon.redis import connection_pool
     control, socket_path, _ = protected_redis
-    pool = connection_pool(unix_socket_path=socket_path, db=6)
+    pool = connection_pool(unix_socket_path=socket_path, db=6, **timeouts)
     client = redis.Redis(connection_pool=pool)
     try:
         with client.pipeline() as transaction:

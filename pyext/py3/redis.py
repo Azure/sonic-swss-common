@@ -18,6 +18,15 @@ def _milliseconds(timeout):
 
 
 class UnixConnection(UnixDomainSocketConnection):
+    def __init__(self, *args, socket_connect_timeout=None, **kwargs):
+        # redis-py 3.x Unix connections do not accept or store this option.
+        # Keep it in the adapter so both old and new clients reach the native
+        # connector with the requested connect and read timeouts.
+        super().__init__(*args, **kwargs)
+        self.socket_connect_timeout = (
+            self.socket_timeout if socket_connect_timeout is None
+            else socket_connect_timeout)
+
     def _connect(self):
         fd = swsscommon.openRedisUnixSocket(
             self.path, _milliseconds(self.socket_connect_timeout),
