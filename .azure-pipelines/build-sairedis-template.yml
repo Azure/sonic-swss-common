@@ -99,8 +99,9 @@ jobs:
       path: $(Build.ArtifactStagingDirectory)/download
       artifact: common-lib
       patterns: |
-        target/debs/${{ parameters.debian_version }}/libyang-*_1.0*.deb
-        target/debs/${{ parameters.debian_version }}/libyang_1.0*.deb
+        target/debs/${{ parameters.debian_version }}/libyang3_*.deb
+        target/debs/${{ parameters.debian_version }}/libyang-dev_3*.deb
+        target/debs/${{ parameters.debian_version }}/python3-libyang*.deb
     displayName: "Download libyang from common lib"
   - script: |
       set -ex

@@ -16,6 +16,27 @@
 using namespace std;
 using namespace swss;
 
+/* libyang1 vs libyang3 API shim (see defaultvalueprovider.h for the version
+ * sentinel rationale). Macros below collapse trivial spelling differences;
+ * structurally divergent code (key extraction, leaf-list defaults, ly_ctx_new,
+ * module->data layout) still needs explicit #ifdef branches below. */
+#ifdef LY_ARRAY_COUNT
+#  define SWSS_LYS_NODE_CHILD(n)                  lysc_node_child(n)
+#  define SWSS_LYS_DFLT_STR(n)                    lyd_value_get_canonical((n)->module->ctx, (n)->dflt)
+#  define SWSS_MODULE_DATA(m)                     ((m)->compiled ? (m)->compiled->data : nullptr)
+#  define SWSS_LY_CTX_DESTROY(ctx)                ly_ctx_destroy(ctx)
+// libyang1 treated revision="" as "load latest"; libyang3 instead requires
+// it to match the module's revision exactly, so we have to feed it NULL when
+// the caller asked for any revision.
+#  define SWSS_LY_CTX_LOAD_MODULE(ctx, n, rev)    ly_ctx_load_module((ctx), (n), ((rev) && *(rev)) ? (rev) : NULL, NULL)
+#else
+#  define SWSS_LYS_NODE_CHILD(n)                  ((n)->child)
+#  define SWSS_LYS_DFLT_STR(n)                    ((n)->dflt)
+#  define SWSS_MODULE_DATA(m)                     ((m)->data)
+#  define SWSS_LY_CTX_DESTROY(ctx)                ly_ctx_destroy(ctx, NULL)
+#  define SWSS_LY_CTX_LOAD_MODULE(ctx, n, rev)    ly_ctx_load_module(ctx, n, rev)
+#endif
+
 [[noreturn]] void ThrowRunTimeError(string message)
 {
     SWSS_LOG_ERROR("DefaultValueProvider: %s", message.c_str());
@@ -127,7 +148,7 @@ bool TableInfoMultipleList::FoundFieldMappingByKey(const string &key, FieldDefau
     return keySchema != m_defaultValueMapping.end();
 }
 
-shared_ptr<KeySchema> DefaultValueHelper::GetKeySchema(struct lys_node* tableChildNode)
+shared_ptr<KeySchema> DefaultValueHelper::GetKeySchema(SWSS_LYS_NODE* tableChildNode)
 {
     SWSS_LOG_DEBUG("DefaultValueHelper::GetKeySchema %s\n",tableChildNode->name);
 
@@ -138,7 +159,23 @@ shared_ptr<KeySchema> DefaultValueHelper::GetKeySchema(struct lys_node* tableChi
         SWSS_LOG_DEBUG("Child list: %s\n",tableChildNode->name);
 
         // when a top level container contains list, the key defined by the 'keys' field.
-        struct lys_node_list *listNode = (struct lys_node_list*)tableChildNode;
+        SWSS_LYS_NODE_LIST *listNode = (SWSS_LYS_NODE_LIST*)tableChildNode;
+#ifdef LY_ARRAY_COUNT
+        // libyang3 has no keys_str — walk compiled children and flag key nodes.
+        for (SWSS_LYS_NODE *node = listNode->child; node != NULL; node = node->next)
+        {
+            if (!lysc_is_key(node))
+            {
+                continue;
+            }
+            if (keyValue.length())
+            {
+                keyValue += " ";
+            }
+            keyValue += node->name;
+            keyFieldCount++;
+        }
+#else
         if (listNode->keys_str == nullptr)
         {
             SWSS_LOG_ERROR("Ignore empty key string on list: %s\n",tableChildNode->name);
@@ -147,6 +184,7 @@ shared_ptr<KeySchema> DefaultValueHelper::GetKeySchema(struct lys_node* tableChi
 
         string key(listNode->keys_str);
         keyFieldCount = (int)count(key.begin(), key.end(), ' ') + 1;
+#endif
     }
     else if (tableChildNode->nodetype == LYS_CONTAINER)
     {
@@ -164,16 +202,16 @@ shared_ptr<KeySchema> DefaultValueHelper::GetKeySchema(struct lys_node* tableChi
     return make_shared<KeySchema>(keyValue, keyFieldCount);
 }
 
-void DefaultValueHelper::GetDefaultValueInfoForLeaf(struct lys_node_leaf* leafNode, shared_ptr<FieldDefaultValueMapping> fieldMapping)
+void DefaultValueHelper::GetDefaultValueInfoForLeaf(SWSS_LYS_NODE_LEAF* leafNode, shared_ptr<FieldDefaultValueMapping> fieldMapping)
 {
     if (leafNode->dflt)
     {
-        SWSS_LOG_DEBUG("field: %s, default: %s\n",leafNode->name, leafNode->dflt);
-        fieldMapping->emplace(string(leafNode->name), string(leafNode->dflt));
+        SWSS_LOG_DEBUG("field: %s, default: %s\n",leafNode->name, SWSS_LYS_DFLT_STR(leafNode));
+        fieldMapping->emplace(string(leafNode->name), string(SWSS_LYS_DFLT_STR(leafNode)));
     }
 }
 
-void DefaultValueHelper::GetDefaultValueInfoForChoice(struct lys_node_choice* choiceNode, shared_ptr<FieldDefaultValueMapping> fieldMapping)
+void DefaultValueHelper::GetDefaultValueInfoForChoice(SWSS_LYS_NODE_CHOICE* choiceNode, shared_ptr<FieldDefaultValueMapping> fieldMapping)
 {
     if (choiceNode->dflt == nullptr)
     {
@@ -190,24 +228,46 @@ void DefaultValueHelper::GetDefaultValueInfoForChoice(struct lys_node_choice* ch
             SWSS_LOG_ERROR("choice case %s is not a leaf node\n",fieldInChoice->name);
             continue;
         }
-        
+
         SWSS_LOG_DEBUG("default choice leaf field: %s\n",fieldInChoice->name);
         WARNINGS_NO_CAST_ALIGN
-        struct lys_node_leaf *dfltLeafNode = reinterpret_cast<struct lys_node_leaf*>(fieldInChoice);
+        SWSS_LYS_NODE_LEAF *dfltLeafNode = reinterpret_cast<SWSS_LYS_NODE_LEAF*>(fieldInChoice);
         WARNINGS_RESET
         if (dfltLeafNode->dflt)
         {
-            SWSS_LOG_DEBUG("default choice leaf field: %s, default: %s\n",dfltLeafNode->name, dfltLeafNode->dflt);
-            fieldMapping->emplace(string(fieldInChoice->name), string(dfltLeafNode->dflt));
+            SWSS_LOG_DEBUG("default choice leaf field: %s, default: %s\n",dfltLeafNode->name, SWSS_LYS_DFLT_STR(dfltLeafNode));
+            fieldMapping->emplace(string(fieldInChoice->name), string(SWSS_LYS_DFLT_STR(dfltLeafNode)));
         }
 
         fieldInChoice = fieldInChoice->next;
     }
 }
 
-void DefaultValueHelper::GetDefaultValueInfoForLeaflist(struct lys_node_leaflist *listNode, shared_ptr<FieldDefaultValueMapping> fieldMapping)
+void DefaultValueHelper::GetDefaultValueInfoForLeaflist(SWSS_LYS_NODE_LEAFLIST *listNode, shared_ptr<FieldDefaultValueMapping> fieldMapping)
 {
     // Get leaf-list default value according to:https://www.rfc-editor.org/rfc/rfc7950.html#section-7.7
+#ifdef LY_ARRAY_COUNT
+    // libyang3: listNode->dflts is an LY_ARRAY of lyd_value* — convert each to
+    // its canonical string then hand a null-terminated const char ** to JSon.
+    if (listNode->dflts == nullptr)
+    {
+        return;
+    }
+
+    // LY_ARRAY_COUNT returns uint64_t; cast to size_t for malloc/indexing so
+    // the implicit narrowing on 32-bit targets (where size_t is uint32_t)
+    // doesn't trip -Werror=conversion.
+    size_t count = (size_t)LY_ARRAY_COUNT(listNode->dflts);
+    const char **dfltValues = (const char **)malloc((count + 1) * sizeof(*dfltValues));
+    for (size_t i = 0; i < count; i++)
+    {
+        dfltValues[i] = lyd_value_get_canonical(listNode->module->ctx, listNode->dflts[i]);
+    }
+    dfltValues[count] = NULL;
+
+    string dfltValueJson = JSon::buildJson(dfltValues);
+    free(dfltValues);
+#else
     if (listNode->dflt == nullptr)
     {
         return;
@@ -216,22 +276,23 @@ void DefaultValueHelper::GetDefaultValueInfoForLeaflist(struct lys_node_leaflist
     const char** dfltValues = listNode->dflt;
     //convert list default value to json string
     string dfltValueJson = JSon::buildJson(dfltValues);
+#endif
     SWSS_LOG_DEBUG("list field: %s, default: %s\n",listNode->name, dfltValueJson.c_str());
     fieldMapping->emplace(string(listNode->name), dfltValueJson);
 }
 
-FieldDefaultValueMappingPtr DefaultValueHelper::GetDefaultValueInfo(struct lys_node* tableChildNode)
+FieldDefaultValueMappingPtr DefaultValueHelper::GetDefaultValueInfo(SWSS_LYS_NODE* tableChildNode)
 {
     SWSS_LOG_DEBUG("DefaultValueHelper::GetDefaultValueInfo %s\n",tableChildNode->name);
 
-    auto field = tableChildNode->child;
+    auto field = SWSS_LYS_NODE_CHILD(tableChildNode);
     auto fieldMapping = make_shared<FieldDefaultValueMapping>();
     while (field)
     {
         if (field->nodetype == LYS_LEAF)
         {
             WARNINGS_NO_CAST_ALIGN
-            struct lys_node_leaf *leafNode = reinterpret_cast<struct lys_node_leaf*>(field);
+            SWSS_LYS_NODE_LEAF *leafNode = reinterpret_cast<SWSS_LYS_NODE_LEAF*>(field);
             WARNINGS_RESET
 
             SWSS_LOG_DEBUG("leaf field: %s\n",leafNode->name);
@@ -239,7 +300,7 @@ FieldDefaultValueMappingPtr DefaultValueHelper::GetDefaultValueInfo(struct lys_n
         }
         else if (field->nodetype == LYS_CHOICE)
         {
-            struct lys_node_choice *choiceNode = reinterpret_cast<struct lys_node_choice*>(field);
+            SWSS_LYS_NODE_CHOICE *choiceNode = reinterpret_cast<SWSS_LYS_NODE_CHOICE*>(field);
 
             SWSS_LOG_DEBUG("choice field: %s\n",choiceNode->name);
             GetDefaultValueInfoForChoice(choiceNode, fieldMapping);
@@ -247,7 +308,7 @@ FieldDefaultValueMappingPtr DefaultValueHelper::GetDefaultValueInfo(struct lys_n
         else if (field->nodetype == LYS_LEAFLIST)
         {
             WARNINGS_NO_CAST_ALIGN
-            struct lys_node_leaflist *listNode = reinterpret_cast<struct lys_node_leaflist*>(field);
+            SWSS_LYS_NODE_LEAFLIST *listNode = reinterpret_cast<SWSS_LYS_NODE_LEAFLIST*>(field);
             WARNINGS_RESET
 
             SWSS_LOG_DEBUG("list field: %s\n",listNode->name);
@@ -260,10 +321,10 @@ FieldDefaultValueMappingPtr DefaultValueHelper::GetDefaultValueInfo(struct lys_n
     return fieldMapping;
 }
 
-int DefaultValueHelper::BuildTableDefaultValueMapping(struct lys_node* table, TableDefaultValueMapping &tableDefaultValueMapping)
+int DefaultValueHelper::BuildTableDefaultValueMapping(SWSS_LYS_NODE* table, TableDefaultValueMapping &tableDefaultValueMapping)
 {
     int childListCount = 0;
-    auto nextChild = table->child;
+    auto nextChild = SWSS_LYS_NODE_CHILD(table);
     while (nextChild)
     {
         // get key from schema
@@ -289,7 +350,7 @@ int DefaultValueHelper::BuildTableDefaultValueMapping(struct lys_node* table, Ta
 }
 
 // Load default value info from yang model and append to default value mapping
-void DefaultValueProvider::AppendTableInfoToMapping(struct lys_node* table)
+void DefaultValueProvider::AppendTableInfoToMapping(SWSS_LYS_NODE* table)
 {
     SWSS_LOG_DEBUG("DefaultValueProvider::AppendTableInfoToMapping table name: %s\n",table->name);
     TableDefaultValueMapping tableDefaultValueMapping;
@@ -401,7 +462,7 @@ DefaultValueProvider::~DefaultValueProvider()
     if (m_context)
     {
         // set private_destructor to NULL because no any private data
-        ly_ctx_destroy(m_context, NULL);
+        SWSS_LY_CTX_DESTROY(m_context);
     }
 }
 
@@ -418,7 +479,15 @@ void DefaultValueProvider::Initialize(const char* modulePath)
         ThrowRunTimeError("Open Yang model path " + string(modulePath) + " failed");
     }
 
+#ifdef LY_ARRAY_COUNT
+    if (ly_ctx_new(modulePath, LY_CTX_ALL_IMPLEMENTED, &m_context) != LY_SUCCESS)
+    {
+        ThrowRunTimeError("ly_ctx_new() failed");
+    }
+#else
     m_context = ly_ctx_new(modulePath, LY_CTX_ALLIMPLEMENTED);
+#endif
+
     struct dirent *subDir;
     while ((subDir = readdir(moduleDir)) != nullptr)
     {
@@ -439,7 +508,7 @@ void DefaultValueProvider::Initialize(const char* modulePath)
 
 void DefaultValueProvider::LoadModule(const string &name, const string &path, struct ly_ctx *context)
 {
-    const struct lys_module *module = ly_ctx_load_module(
+    const struct lys_module *module = SWSS_LY_CTX_LOAD_MODULE(
                                             context,
                                             name.c_str(),
                                             EMPTY_STR); // Use EMPTY_STR to revision to load the latest revision
@@ -450,14 +519,14 @@ void DefaultValueProvider::LoadModule(const string &name, const string &path, st
         return;
     }
 
-    if (module->data == nullptr)
+    if (SWSS_MODULE_DATA(module) == nullptr)
     {
         // Not every yang file should contains yang model
         SWSS_LOG_WARN("Yang file %s does not contains model %s.\n", path.c_str(), name.c_str());
         return;
     }
 
-    struct lys_node *topLevelNode = module->data;
+    SWSS_LYS_NODE *topLevelNode = SWSS_MODULE_DATA(module);
     while (topLevelNode)
     {
         if (topLevelNode->nodetype != LYS_CONTAINER)
@@ -469,7 +538,7 @@ void DefaultValueProvider::LoadModule(const string &name, const string &path, st
         }
 
         SWSS_LOG_DEBUG("top level container: %s\n",topLevelNode->name);
-        auto container = topLevelNode->child;
+        auto container = SWSS_LYS_NODE_CHILD(topLevelNode);
         while (container)
         {
             SWSS_LOG_DEBUG("container name: %s\n",container->name);

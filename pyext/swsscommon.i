@@ -269,6 +269,13 @@ T castSelectableObj(swss::Selectable *temp)
 %include "dbconnector.h"
 #ifdef ENABLE_YANG_MODULES
 %include "cfg_schema.h"
+// DefaultValueHelper exposes libyang schema-node pointers (lys_node* /
+// lysc_node*) whose type names differ between libyang1 and libyang3.
+// SWIG's preprocessor cannot see <libyang/libyang.h>, so it always takes
+// the libyang1 branch of the version shim — generating bindings that fail
+// to compile against libyang3 headers. The helper is internal; no Python
+// caller uses it. Skip it so the generated wrappers stay version-agnostic.
+%ignore swss::DefaultValueHelper;
 %include "defaultvalueprovider.h"
 #endif
 %include "sonicv2connector.h"
