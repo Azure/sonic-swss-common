@@ -88,11 +88,21 @@ stages:
         patterns: |
           target/debs/${{ parameters.debian_version }}/libyang3_*.deb
           target/debs/${{ parameters.debian_version }}/libyang-dev_3*.deb
+          target/debs/${{ parameters.debian_version }}/libyang_1.0*.deb
+          target/debs/${{ parameters.debian_version }}/libyang-cpp_1.0*.deb
+          target/debs/${{ parameters.debian_version }}/python3-yang_1.0*.deb
       displayName: "Download yang deb from amd64 common lib"
     - script: |
         set -ex
+        # 202511's sonic_yang_mgmt wheel (used by gen_cfg_schema.py) is still on
+        # libyang1's Python bindings, so python3-yang and its libyang1 runtime are
+        # installed next to libyang3 -- but not libyang1's -dev, which is the same
+        # package as libyang-dev 3.
         sudo dpkg -i $(Build.ArtifactStagingDirectory)/download/target/debs/${{ parameters.debian_version }}/libyang3_*.deb \
-                     $(Build.ArtifactStagingDirectory)/download/target/debs/${{ parameters.debian_version }}/libyang-dev_3*.deb
+                     $(Build.ArtifactStagingDirectory)/download/target/debs/${{ parameters.debian_version }}/libyang-dev_3*.deb \
+                     $(Build.ArtifactStagingDirectory)/download/target/debs/${{ parameters.debian_version }}/libyang_1.0*.deb \
+                     $(Build.ArtifactStagingDirectory)/download/target/debs/${{ parameters.debian_version }}/libyang-cpp_1.0*.deb \
+                     $(Build.ArtifactStagingDirectory)/download/target/debs/${{ parameters.debian_version }}/python3-yang_1.0*.deb
         # python3-libyang's bookworm .deb pins python3 (>= 3.11~, << 3.12) and
         # won't install on Ubuntu 22.04 (python 3.10). Build the Python bindings
         # from PyPI instead — they link against the libyang3 we just installed.

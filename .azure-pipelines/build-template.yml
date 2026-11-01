@@ -82,6 +82,9 @@ jobs:
         target/debs/${{ parameters.debian_version }}/libyang3_*.deb
         target/debs/${{ parameters.debian_version }}/libyang-dev_3*.deb
         target/debs/${{ parameters.debian_version }}/python3-libyang*.deb
+        target/debs/${{ parameters.debian_version }}/libyang_1.0*.deb
+        target/debs/${{ parameters.debian_version }}/libyang-cpp_1.0*.deb
+        target/debs/${{ parameters.debian_version }}/python3-yang_1.0*.deb
     displayName: "Download libyang from ${{ parameters.arch }} common lib"
     condition: ne('${{ parameters.debian_version }}', 'trixie')
   - task: DownloadPipelineArtifact@2
@@ -100,6 +103,9 @@ jobs:
         target/debs/${{ parameters.debian_version }}/libyang3_*.deb
         target/debs/${{ parameters.debian_version }}/libyang-dev_3*.deb
         target/debs/${{ parameters.debian_version }}/python3-libyang*.deb
+        target/debs/${{ parameters.debian_version }}/libyang_1.0*.deb
+        target/debs/${{ parameters.debian_version }}/libyang-cpp_1.0*.deb
+        target/debs/${{ parameters.debian_version }}/python3-yang_1.0*.deb
         target/debs/${{ parameters.debian_version }}/libpcre*.deb
     displayName: "Download libyang from ${{ parameters.arch }} common lib"
     condition: eq('${{ parameters.debian_version }}', 'trixie')
