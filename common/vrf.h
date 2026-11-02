@@ -1,5 +1,4 @@
-#ifndef __VRF__
-#define __VRF__
+#pragma once
 
 #include <net/if.h>
 #include <string>
@@ -38,5 +37,3 @@ inline bool isVrfNameValid(const std::string &vrfName)
 }
 
 }
-
-#endif
