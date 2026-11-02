@@ -30,6 +30,25 @@ public:
     std::string getTableNameSeparator() const;
     std::string getDbName() const;
 
+#ifndef SWIG
+    // Cadence of the "still waiting for INIT_INDICATOR" messages emitted by
+    // wait_for_init_indicator(), in seconds. Defaults are production values;
+    // unit tests pass a compressed schedule to exercise every branch quickly.
+    struct WaitForInitSchedule
+    {
+        int first_warn_sec = 30;      // quiet period before first syslog warning
+        int warn_interval_sec = 300;  // cadence of subsequent syslog warnings
+        int escalate_sec = 900;       // escalate the warning to an error after this
+        int tty_interval_sec = 30;    // cadence of stderr messages when it is a tty
+    };
+
+    // Block until INIT_INDICATOR is set in the connected db, logging per
+    // the schedule while blocked. db_connect(wait_for_init=true) uses the
+    // default schedule.
+    void wait_for_init_indicator();
+    void wait_for_init_indicator(const WaitForInitSchedule& schedule);
+#endif
+
 protected:
     std::string m_table_name_separator = "|";
     std::string m_key_separator = "|";
