@@ -14,8 +14,8 @@ using namespace std;
 
 namespace swss {
 
-SubscriberStateTable::SubscriberStateTable(DBConnector *db, const string &tableName, int popBatchSize, int pri)
-    : ConsumerTableBase(db, tableName, popBatchSize, pri), m_table(db, tableName)
+SubscriberStateTable::SubscriberStateTable(DBConnector *db, const string &tableName, int popBatchSize, int pri, bool update_only)
+    : ConsumerTableBase(db, tableName, popBatchSize, pri), m_table(db, tableName), m_update_only(update_only)
 {
     m_keyspace = "__keyspace@";
 
@@ -36,6 +36,14 @@ SubscriberStateTable::SubscriberStateTable(DBConnector *db, const string &tableN
         if (!m_table.get(key, kfvFieldsValues(kco)))
         {
             continue;
+        }
+
+        if (m_update_only)
+        {
+            for (auto fv : kfvFieldsValues(kco))
+            {
+                m_cache[key][fvField(fv)] = fvValue(fv);
+            }
         }
 
         m_buffer.push_back(kco);
@@ -144,6 +152,10 @@ void SubscriberStateTable::pops(deque<KeyOpFieldsValuesTuple> &vkco, const strin
         {
             kfvKey(kco) = key;
             kfvOp(kco) = DEL_COMMAND;
+            if (m_update_only)
+            {
+                m_cache.erase(key);
+            }
         }
         else
         {
@@ -151,6 +163,24 @@ void SubscriberStateTable::pops(deque<KeyOpFieldsValuesTuple> &vkco, const strin
             {
                 SWSS_LOG_NOTICE("Miss table key %s, possibly outdated", table_entry.c_str());
                 continue;
+            }
+            if (m_update_only)
+            {
+                bool update = false;
+                for (auto fv : kfvFieldsValues(kco))
+                {
+                    if (m_cache.find(key) == m_cache.end() ||
+                        m_cache.at(key).find(fvField(fv)) == m_cache.at(key).end() ||
+                        m_cache.at(key).at(fvField(fv)) != fvValue(fv))
+                    {
+                        update = true;
+                        m_cache[key][fvField(fv)] = fvValue(fv);
+                    }
+                }
+                if (!update)
+                {
+                    kfvFieldsValues(kco) = std::vector<FieldValueTuple>{};
+                }
             }
             kfvKey(kco) = key;
             kfvOp(kco) = SET_COMMAND;
