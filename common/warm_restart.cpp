@@ -126,14 +126,14 @@ bool WarmStart::checkWarmStart(const std::string &app_name,
         return false;
     }
 
+    restore_count = (uint32_t)stoul(value);
     if (incr_restore_cnt)
     {
-        restore_count = (uint32_t)stoul(value);
         restore_count++;
         warmStart.m_stateWarmRestartTable->hset(app_name, "restore_count",
                                                 std::to_string(restore_count));
     }
-    SWSS_LOG_NOTICE("%s doing warm start, restore count %d", app_name.c_str(),
+    SWSS_LOG_NOTICE("%s doing warm start, restore count %u", app_name.c_str(),
                     restore_count);
 
     return true;
