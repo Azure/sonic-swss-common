@@ -7,6 +7,7 @@ use std::collections::HashMap;
 pub struct DbConnector {
     pub(crate) ptr: SWSSDBConnector,
     connection: DbConnectionInfo,
+    authenticate: bool,
 }
 
 /// Details about how a DbConnector is connected to Redis
@@ -71,7 +72,29 @@ impl DbConnector {
             }
         };
 
-        Ok(Self { ptr, connection })
+        Ok(Self { ptr, connection, authenticate: false })
+    }
+
+    /// Request native authentication for a named or keyed Unix connection.
+    /// Existing `new` constructors keep authentication disabled.
+    pub fn new_with_auth(connection: DbConnectionInfo, timeout_ms: u32, authenticate: bool) -> Result<Self> {
+        if !authenticate { return Self::new(connection, timeout_ms); }
+        let ptr = match &connection {
+            DbConnectionInfo::Named { db_name, is_tcp_conn } => {
+                let name = cstr(db_name)?;
+                unsafe { swss_try!(out => SWSSDBConnector_new_named_with_auth(
+                    name.as_ptr(), timeout_ms, *is_tcp_conn as u8, 1, out))? }
+            }
+            DbConnectionInfo::Keyed { db_name, is_tcp_conn, container_name, netns } => {
+                let name = cstr(db_name)?;
+                let container = cstr(container_name)?;
+                let ns = cstr(netns)?;
+                unsafe { swss_try!(out => SWSSDBConnector_new_keyed_with_auth(
+                    name.as_ptr(), timeout_ms, *is_tcp_conn as u8, container.as_ptr(), ns.as_ptr(), 1, out))? }
+            }
+            _ => return Err(Exception::new("Native writer authentication requires named/keyed Unix metadata")),
+        };
+        Ok(Self { ptr, connection, authenticate: true })
     }
 
     /// Create a DbConnector from a named entry in the SONiC db config.
@@ -123,7 +146,7 @@ impl DbConnector {
     ///
     /// Timeout of 0 means block indefinitely.
     pub fn clone_timeout(&self, timeout_ms: u32) -> Result<Self> {
-        Self::new(self.connection.clone(), timeout_ms)
+        Self::new_with_auth(self.connection.clone(), timeout_ms, self.authenticate)
     }
 
     pub fn connection(&self) -> &DbConnectionInfo {

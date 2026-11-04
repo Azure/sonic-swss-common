@@ -117,3 +117,9 @@ For example:
 * Use a pull request to do code review
 * Use issues to keep track of what is going on
 
+## Explicit authentication through C and Rust
+
+The C interface provides `SWSSDBConnector_new_named_with_auth`,
+`SWSSDBConnector_new_keyed_with_auth`, `SWSSSonicV2Connector_new_with_auth` and
+`SWSSConfigDBConnector_new_with_auth`. Rust exposes corresponding `new_with_auth`
+constructors. Existing entry points keep native authentication disabled.

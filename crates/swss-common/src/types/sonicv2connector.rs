@@ -55,6 +55,16 @@ impl SonicV2Connector {
         }
     }
 
+    /// Explicit native authentication, with transport selected by the caller.
+    pub fn new_with_auth(use_unix_socket_path: bool, namespace: Option<String>, authenticate: bool) -> Result<Self> {
+        if !authenticate { return Self::new(use_unix_socket_path, namespace); }
+        let netns = namespace.unwrap_or_default();
+        let ns = cstr(&netns)?;
+        let ptr = unsafe { swss_try!(out => SWSSSonicV2Connector_new_with_auth(
+            use_unix_socket_path as u8, ns.as_ptr(), 1, out))? };
+        Ok(Self { ptr, use_unix_socket_path, netns })
+    }
+
     /// Connect to a specific database.
     pub fn connect(&self, db_name: &str, retry_on: bool) -> Result<()> {
         let db_name_cstr = cstr(db_name)?;

@@ -18,6 +18,10 @@ typedef struct SWSSConfigDBConnectorOpaque *SWSSConfigDBConnector;
 SWSSResult SWSSConfigDBConnector_new(uint8_t use_unix_socket_path, const char *netns, SWSSConfigDBConnector *outConfigDb);
 
 // Free the ConfigDBConnector
+// Explicit authentication; flags must be 0 or 1. Output is null on failure.
+SWSSResult SWSSConfigDBConnector_new_with_auth(uint8_t use_unix_socket_path, const char *netns,
+    uint8_t authenticate, SWSSConfigDBConnector *outConnector);
+
 SWSSResult SWSSConfigDBConnector_free(SWSSConfigDBConnector configDb);
 
 // Connect to ConfigDB
