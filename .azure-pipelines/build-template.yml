@@ -105,11 +105,18 @@ jobs:
         redis-cli FLUSHALL
         pytest-3 --cov=. --cov-report=xml
         [ -f coverage.xml ] && mv coverage.xml tests/coverage.xml
+        bash tests/run-authentication-tests.sh
         gcovr -r ./ -e ".*/swsscommon_wrap.cpp" -e=tests --exclude-unreachable-branches --exclude-throw-branches --gcov-ignore-parse-errors -x --xml-pretty  -o coverage.xml
         make -C goext
         redis-cli FLUSHALL
         make -C goext check
       displayName: "Run swss common unit tests"
+    - task: PublishTestResults@2
+      condition: succeededOrFailed()
+      inputs:
+        testResultsFormat: JUnit
+        testResultsFiles: authentication-tests.xml
+        testRunTitle: Redis authentication
   - publish: $(System.DefaultWorkingDirectory)/
     artifact: ${{ parameters.artifact_name }}
     displayName: "Archive swss common debian packages"
