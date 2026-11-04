@@ -117,3 +117,12 @@ For example:
 * Use a pull request to do code review
 * Use issues to keep track of what is going on
 
+## Explicit higher-level connector authentication
+
+`SonicV2Connector(use_unix_socket_path=True, authenticate=True)` requests native
+authentication for named connections and recovery. Both options default to false;
+authentication does not change the requested transport. `ConfigDBConnector` and
+`ConfigDBPipeConnector` accept the same options.
+
+Native DBInterface callers can use `connectAuthenticated(db_name, key, retry)`.
+Authentication and endpoint selection are retained through subscription recovery.

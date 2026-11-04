@@ -7,7 +7,7 @@ else
 DBGFLAGS = -g -DNDEBUG
 endif
 
-SWIG_SOURCES = pyext/swsscommon.i
+SWIG_SOURCES = pyext/swsscommon.i common/dbinterface.h common/sonicv2connector.h common/configdb.h
 SWIG_FLAG = -Wall -c++ -python -keyword
 if ARCH64
 SWIG_FLAG += -DSWIGWORDSIZE64

@@ -15,6 +15,11 @@ ConfigDBConnector_Native::ConfigDBConnector_Native(bool use_unix_socket_path, co
 {
 }
 
+ConfigDBConnector_Native::ConfigDBConnector_Native(bool use_unix_socket_path, const char *netns, bool authenticate)
+    : SonicV2Connector_Native(use_unix_socket_path, netns, authenticate)
+{
+}
+
 void ConfigDBConnector_Native::db_connect(string db_name, bool wait_for_init, bool retry_on)
 {
     m_db_name = db_name;
@@ -264,6 +269,11 @@ std::string ConfigDBConnector_Native::getDbName() const
 
 ConfigDBPipeConnector_Native::ConfigDBPipeConnector_Native(bool use_unix_socket_path, const char *netns)
     : ConfigDBConnector_Native(use_unix_socket_path, netns)
+{
+}
+
+ConfigDBPipeConnector_Native::ConfigDBPipeConnector_Native(bool use_unix_socket_path, const char *netns, bool authenticate)
+    : ConfigDBConnector_Native(use_unix_socket_path, netns, authenticate)
 {
 }
 

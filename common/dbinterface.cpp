@@ -1,12 +1,48 @@
 #include <chrono>
 #include <cstring>
 #include <utility>
+#include <system_error>
 #include <hiredis/hiredis.h>
 #include "dbinterface.h"
 
 using namespace std;
 using namespace std::chrono;
 using namespace swss;
+
+namespace
+{
+template<typename Connect>
+void connectAuthenticatedWithRetry(Connect connect, bool retry)
+{
+    for (;;)
+    {
+        try { connect(); return; }
+        catch (const RedisError&) { if (!retry) throw; }
+        catch (const std::system_error& error)
+        {
+            if (!retry || error.code() != std::make_error_code(std::errc::address_not_available)) throw;
+        }
+        SWSS_LOG_WARN("Retrying authenticated Redis connection in %d s", DBInterface::CONNECT_RETRY_WAIT_TIME);
+        sleep(DBInterface::CONNECT_RETRY_WAIT_TIME);
+    }
+}
+}
+
+void DBInterface::connectAuthenticated(const std::string& dbName, const SonicDBKey& key, bool retry)
+{
+    if (dbName.empty()) throw invalid_argument("dbName");
+    const auto existing = m_redisClient.find(dbName);
+    if (existing != m_redisClient.end())
+    {
+        if (!existing->second.authenticationEnabled() || !(existing->second.getDBKey() == key))
+            throw invalid_argument("Close the existing connection before changing authentication or DB key");
+        return;
+    }
+    connectAuthenticatedWithRetry([&] {
+        m_redisClient.emplace(std::piecewise_construct, std::forward_as_tuple(dbName),
+            std::forward_as_tuple(dbName, 0, false, key, true));
+    }, retry);
+}
 
 void DBInterface::set_redis_kwargs(std::string unix_socket_path, std::string host, int port)
 {
@@ -29,13 +65,16 @@ void DBInterface::connect(int dbId, const std::string& dbName, bool retry)
 
 void DBInterface::close(const std::string& dbName)
 {
-    _unsubscribe_keyspace_notification(dbName);
+    const auto client = m_redisClient.find(dbName);
+    if (client != m_redisClient.end() && client->second.authenticationEnabled())
+        _unsubscribe_keyspace_notification(dbName);
     m_redisClient.erase(dbName);
 }
 
 void DBInterface::close()
 {
-    keyspace_notification_channels.clear();
+    for (const auto& client : m_redisClient)
+        if (client.second.authenticationEnabled()) _unsubscribe_keyspace_notification(client.first);
     m_redisClient.clear();
 }
 
@@ -296,7 +335,7 @@ void DBInterface::_subscribe_keyspace_notification(const std::string& dbName)
 {
     SWSS_LOG_DEBUG("Subscribe to keyspace notification");
     auto& client = m_redisClient.at(dbName);
-    std::shared_ptr<DBConnector> pubsub(client.newConnector(0));
+    std::unique_ptr<DBConnector> pubsub(client.newConnector(0));
     pubsub->psubscribe(KEYSPACE_PATTERN);
 
     // Set the timeout of the pubsub channel, so future redisGetReply will be impacted
@@ -307,15 +346,23 @@ void DBInterface::_subscribe_keyspace_notification(const std::string& dbName)
         throw RedisError("Failed to redisSetTimeout", pubsub->getContext());
     }
 
-    keyspace_notification_channels.emplace(dbName, std::move(pubsub));
+    keyspace_notification_channels.emplace(std::piecewise_construct, std::forward_as_tuple(dbName), std::forward_as_tuple(std::move(pubsub)));
 }
 
 // In the event Redis is unavailable, close existing connections, and try again.
 void DBInterface::_connection_error_handler(const std::string& dbName)
 {
     SWSS_LOG_WARN("Could not connect to Redis--waiting before trying again.");
-    const auto& client = get_redis_client(dbName);
-    const int dbId = client.getDbId();
+    auto& client = get_redis_client(dbName);
+    if (client.authenticationEnabled())
+    {
+        const SonicDBKey key = client.getDBKey();
+        close(dbName);
+        sleep(CONNECT_RETRY_WAIT_TIME);
+        connectAuthenticated(dbName, key, true);
+        return;
+    }
+    int dbId = client.getDbId();
     const auto *context = client.getContext();
     const bool tcp = context->connection_type == REDIS_CONN_TCP;
     const string unixPath = tcp ? "" : context->unix_sock.path;

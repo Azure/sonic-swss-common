@@ -33,6 +33,8 @@ class DBInterface
 {
 public:
     void connect(int dbId, const std::string& dbName, bool retry = true);
+    // Explicit Unix transport and native authentication, using named DB metadata.
+    void connectAuthenticated(const std::string& dbName, const SonicDBKey& key, bool retry = true);
     void close(const std::string& dbName);
     void close();
     int64_t del(const std::string& dbName, const std::string& key, bool blocking = false);
