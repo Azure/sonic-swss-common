@@ -60,28 +60,3 @@ tests_tests_LDADD = $(LDADD_GTEST) -lpthread common/libswsscommon.la $(LIBNL_LIB
 if YANGMODS
 tests_tests_SOURCES += tests/defaultvalueprovider_ut.cpp
 endif
-
-# Compile only the policy reader again; reuse the other production objects.
-# These targets are never installed or included in the Debian packages.
-check_LTLIBRARIES = tests/libswsscommon-auth-test.la
-check_PROGRAMS = tests/redis_auto_auth_tests
-REDIS_AUTH_TEST_DIR = $(abs_builddir)/tests/redis-auth
-redis_auth_test_CPPFLAGS = -DREDIS_AUTH_DIR='"$(REDIS_AUTH_TEST_DIR)/policy"'
-redis_auth_test_objects = $(filter-out common/libswsscommon_la-dbconnector.lo,$(common_libswsscommon_la_OBJECTS))
-
-tests_libswsscommon_auth_test_la_SOURCES = common/dbconnector.cpp
-tests_libswsscommon_auth_test_la_CPPFLAGS = $(common_libswsscommon_la_CPPFLAGS) $(redis_auth_test_CPPFLAGS)
-tests_libswsscommon_auth_test_la_CXXFLAGS = $(common_libswsscommon_la_CXXFLAGS)
-tests_libswsscommon_auth_test_la_LIBADD = $(redis_auth_test_objects) $(common_libswsscommon_la_LIBADD)
-tests_libswsscommon_auth_test_la_DEPENDENCIES = $(redis_auth_test_objects)
-tests_libswsscommon_auth_test_la_LDFLAGS = $(common_libswsscommon_la_LDFLAGS) -rpath $(abs_builddir)/tests/.libs
-
-tests_redis_auto_auth_tests_SOURCES = tests/redis_auto_auth_ut.cpp tests/main.cpp
-tests_redis_auto_auth_tests_CPPFLAGS = $(tests_tests_CPPFLAGS) $(redis_auth_test_CPPFLAGS)
-tests_redis_auto_auth_tests_LDADD = $(LDADD_GTEST) tests/libswsscommon-auth-test.la
-
-# Each runner invocation selects a fresh directory, so rebuild the two objects
-# that embed it even when make finds artifacts from an earlier run.
-common/tests_libswsscommon_auth_test_la-dbconnector.lo tests/redis_auto_auth_tests-redis_auto_auth_ut.o: FORCE
-
-EXTRA_DIST += tests/run-redis-auth-tests.sh tests/test_redis_auto_auth.py

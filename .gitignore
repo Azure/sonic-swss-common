@@ -62,7 +62,6 @@ stamp-h1
 ###############
 common/swssloglevel
 tests/tests
-tests/redis_auto_auth_tests
 sonic-db-cli/sonic-db-cli
 
 # Bazel Build System #

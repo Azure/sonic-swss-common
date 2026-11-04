@@ -80,14 +80,6 @@ void swss::NotificationConsumer::subscribeWithRetry()
             subscribe();
             break;
         }
-        catch (const RedisAuthError&)
-        {
-            throw;
-        }
-        catch (const RedisDescriptorError&)
-        {
-            throw;
-        }
         catch(...)
         {
             SWSS_LOG_ERROR("failed to subscribe on %s", m_channel.c_str());
