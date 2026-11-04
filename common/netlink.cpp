@@ -60,9 +60,45 @@ void NetLink::registerGroup(int rtnlGroup)
     }
 }
 
-void NetLink::dumpRequest(int rtmGetCommand)
+void NetLink::dumpRequest(int rtmGetCommand, int family)
 {
-    int err = nl_rtgen_request(m_socket, rtmGetCommand, AF_UNSPEC, NLM_F_DUMP);
+    int err = -1;
+    if ((rtmGetCommand == RTM_GETNEIGH) && (family == AF_BRIDGE))
+    {
+        struct ifinfomsg hdr;
+        hdr.ifi_family = static_cast<unsigned char>(family);
+        struct nl_msg *msg;
+
+        msg = nlmsg_alloc_simple(RTM_GETNEIGH, NLM_F_REQUEST | NLM_F_DUMP);
+        if (!msg)
+        {
+            err = -NLE_NOMEM;
+        }
+        else
+        {
+            if (nlmsg_append(msg, &hdr, sizeof(hdr), NLMSG_ALIGNTO) < 0)
+            {
+                nlmsg_free(msg);
+                err = -NLE_MSGSIZE;
+            }
+            else
+            {
+                err = nl_send_auto(m_socket, msg);
+                if (err > 0)
+                {
+                    err = 0;
+                }
+                else
+                {
+                    err = -NLE_INVAL;
+                }
+            }
+        }
+    }
+    else
+    {
+        err = nl_rtgen_request(m_socket, rtmGetCommand, family, NLM_F_DUMP);
+    }
     if (err < 0)
     {
         SWSS_LOG_ERROR("Unable to request dump on group %d: %s", rtmGetCommand,
