@@ -23,3 +23,5 @@ include tests/Makefile.am
 
 
 ACLOCAL_AMFLAGS = -I m4
+
+SWIG_SOURCES += common/redissocket.h
