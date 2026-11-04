@@ -9,6 +9,7 @@ positional arguments:
 optional arguments:
   -h, --help            show this help message and exit
   -s, --unixsocket      Override use of tcp_port and use unixsocket
+      --authenticate   Request native local writer authentication (requires Unix)
   -j, --json            Print command result as JSON
   -n NAMESPACE, --namespace NAMESPACE
                         Namespace string to use asic0/asic1.../asicn
