@@ -585,6 +585,13 @@ after libswsscommon deb make.
 #define BMP_STATE_BGP_RIB_IN_TABLE               "BGP_RIB_IN_TABLE"
 #define BMP_STATE_BGP_RIB_OUT_TABLE              "BGP_RIB_OUT_TABLE"
 
+/*OCS*/
+#define STATE_OCS_PORT_TABLE_NAME                               "OCS_PORT"
+#define STATE_OCS_CROSS_CONNECT_TABLE_NAME                      "OCS_CROSS_CONNECT"
+#define STATE_OCS_CROSS_CONNECT_PHYSICAL_PATH_TABLE_NAME        "OCS_CROSS_CONNECT_PHYSICAL_PATH"
+#define STATE_OCS_FACTORY_INSERTION_LOSS_TABLE_NAME             "OCS_FACTORY_INSERTION_LOSS"
+
+
 #ifdef __cplusplus
 }
 #endif
