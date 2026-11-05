@@ -9,9 +9,8 @@ from . import swsscommon
 
 
 class UnixConnection(UnixDomainSocketConnection):
-    def __init__(self, *args, authenticate=False, socket_connect_timeout=None, **kwargs):
+    def __init__(self, *args, socket_connect_timeout=None, **kwargs):
         super().__init__(*args, **kwargs)
-        self._authenticate = authenticate
         self._connect_timeout = self.socket_timeout if socket_connect_timeout is None else socket_connect_timeout
 
     def _connect(self):
@@ -20,7 +19,7 @@ class UnixConnection(UnixDomainSocketConnection):
             raise ValueError('Connection timeout must be nonnegative')
         milliseconds = 0 if not timeout else max(1, int(timeout * 1000))
         try:
-            fd = swsscommon.openRedisUnixSocket(self.path, milliseconds, self._authenticate)
+            fd = swsscommon.openRedisUnixSocket(self.path, milliseconds, True)
         except PermissionError as error:
             raise AuthenticationError(str(error)) from error
         except TimeoutError as error:
@@ -48,5 +47,5 @@ def connection_pool(unix_socket_path=None, authenticate=False, **options):
         return ConnectionPool(**options)
     options.pop('host', None)
     options.pop('port', None)
-    return ConnectionPool(connection_class=UnixConnection, path=unix_socket_path,
-                          authenticate=authenticate, **options)
+    connection_class = UnixConnection if authenticate else UnixDomainSocketConnection
+    return ConnectionPool(connection_class=connection_class, path=unix_socket_path, **options)
