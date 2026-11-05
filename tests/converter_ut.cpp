@@ -66,6 +66,13 @@ TEST(CONVERTER, negative)
     EXPECT_THROW(to_int<int16_t>(val), invalid_argument);
     EXPECT_THROW(to_int<int8_t>(val), invalid_argument);
 
+    val = "-1";
+
+    EXPECT_THROW(to_uint<uint64_t>(val), invalid_argument);
+    EXPECT_THROW(to_uint<uint32_t>(val), invalid_argument);
+    EXPECT_THROW(to_uint<uint16_t>(val), invalid_argument);
+    EXPECT_THROW(to_uint<uint8_t>(val), invalid_argument);
+
     val = "9223372036854775807";
 
     EXPECT_THROW(to_uint<uint32_t>(val), invalid_argument);

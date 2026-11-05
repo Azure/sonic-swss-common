@@ -14,6 +14,12 @@ namespace swss {
 static inline uint64_t __to_uint64(const std::string &str, uint64_t min = std::numeric_limits<uint64_t>::min(), uint64_t max = std::numeric_limits<uint64_t>::max())
 {
     size_t idx = 0;
+    // stoul() accepts a leading '-' and silently wraps it (e.g. "-1" -> ULONG_MAX);
+    // reject a negative value so unsigned conversion fails instead of returning garbage.
+    if (str.find('-') != std::string::npos)
+    {
+        throw std::invalid_argument("failed to convert " + str + " value to uint64_t type");
+    }
     uint64_t ret = stoul(str, &idx, 0);
     if (str[idx])
     {
