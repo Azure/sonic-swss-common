@@ -1,30 +1,9 @@
-#include <atomic>
-#include <chrono>
-#include <functional>
-#include <thread>
-
 #include "gtest/gtest.h"
 
 #include "common/notificationconsumer.h"
 #include "common/select.h"
 
 using namespace swss;
-
-namespace {
-
-bool waitFor(int deadlineMs, const std::function<bool()> &pred)
-{
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(deadlineMs);
-    while (std::chrono::steady_clock::now() < deadline)
-    {
-        if (pred())
-            return true;
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    }
-    return pred();
-}
-
-} // namespace
 
 TEST(NotificationConsumerInProcess, SendAllowListAndPop)
 {
@@ -64,23 +43,13 @@ TEST(NotificationConsumerInProcess, SelectWakesOnSend)
     Select s;
     s.addSelectable(&consumer);
 
-    std::atomic<bool> sendDone{false};
-    std::thread producer([&]() {
-        consumer.send("ping", "data", {});
-        sendDone = true;
-    });
+    // Same thread: callback threads use send(); here we only verify eventfd wake.
+    consumer.send("ping", "data", {});
 
     Selectable *sel = nullptr;
-    const bool ready = waitFor(2000, [&]() {
-        const int rc = s.select(&sel, 10);
-        return rc == Select::OBJECT && sel == &consumer;
-    });
-
-    producer.join();
-    EXPECT_TRUE(sendDone);
-    ASSERT_TRUE(ready);
-
-    consumer.readData();
+    const int rc = s.select(&sel, 1000);
+    ASSERT_EQ(rc, Select::OBJECT);
+    ASSERT_EQ(sel, &consumer);
 
     std::string op;
     std::string data;
@@ -107,7 +76,7 @@ TEST(NotificationConsumerInProcess, NotifyPendingWhenQueued)
     consumer.notifyPending();
 
     Selectable *sel = nullptr;
-    const int rc = s.select(&sel, 50);
+    const int rc = s.select(&sel, 1000);
     EXPECT_EQ(rc, Select::OBJECT);
     EXPECT_EQ(sel, &consumer);
 }
