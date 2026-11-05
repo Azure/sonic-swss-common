@@ -7,6 +7,7 @@ use std::collections::HashMap;
 pub struct DbConnector {
     pub(crate) ptr: SWSSDBConnector,
     connection: DbConnectionInfo,
+    authenticate: bool,
 }
 
 /// Details about how a DbConnector is connected to Redis
@@ -38,21 +39,28 @@ impl DbConnector {
     ///
     /// Timeout of 0 means block indefinitely.
     pub fn new(connection: DbConnectionInfo, timeout_ms: u32) -> Result<DbConnector> {
+        Self::new_with_auth(connection, timeout_ms, false)
+    }
+
+    /// Request native authentication for a named or keyed Unix connection.
+    /// Existing `new` constructors keep authentication disabled.
+    pub fn new_with_auth(connection: DbConnectionInfo, timeout_ms: u32, authenticate: bool) -> Result<Self> {
         let ptr = match &connection {
-            DbConnectionInfo::Tcp { hostname, port, db_id } => {
+            DbConnectionInfo::Tcp { hostname, port, db_id } if !authenticate => {
                 let hostname = cstr(hostname)?;
                 unsafe {
                     swss_try!(p_db => SWSSDBConnector_new_tcp(*db_id, hostname.as_ptr(), *port, timeout_ms, p_db))?
                 }
             }
-            DbConnectionInfo::Unix { sock_path, db_id } => {
+            DbConnectionInfo::Unix { sock_path, db_id } if !authenticate => {
                 let sock_path = cstr(sock_path)?;
                 unsafe { swss_try!(p_db => SWSSDBConnector_new_unix(*db_id, sock_path.as_ptr(), timeout_ms, p_db))? }
             }
             DbConnectionInfo::Named { db_name, is_tcp_conn } => {
                 let db_name = cstr(db_name)?;
                 unsafe {
-                    swss_try!(p_db => SWSSDBConnector_new_named(db_name.as_ptr(), timeout_ms, *is_tcp_conn as u8, p_db))?
+                    swss_try!(p_db => SWSSDBConnector_new_named_with_auth(
+                        db_name.as_ptr(), timeout_ms, *is_tcp_conn as u8, authenticate as u8, p_db))?
                 }
             }
             DbConnectionInfo::Keyed {
@@ -65,13 +73,14 @@ impl DbConnector {
                 let container_name = cstr(container_name)?;
                 let netns = cstr(netns)?;
                 unsafe {
-                    swss_try!(p_db => SWSSDBConnector_new_keyed(db_name.as_ptr(), timeout_ms, *is_tcp_conn as u8,
-                        container_name.as_ptr(), netns.as_ptr(), p_db))?
+                    swss_try!(p_db => SWSSDBConnector_new_keyed_with_auth(db_name.as_ptr(), timeout_ms, *is_tcp_conn as u8,
+                        container_name.as_ptr(), netns.as_ptr(), authenticate as u8, p_db))?
                 }
             }
+            _ => return Err(Exception::new("Native writer authentication requires named/keyed Unix metadata")),
         };
 
-        Ok(Self { ptr, connection })
+        Ok(Self { ptr, connection, authenticate })
     }
 
     /// Create a DbConnector from a named entry in the SONiC db config.
@@ -123,7 +132,7 @@ impl DbConnector {
     ///
     /// Timeout of 0 means block indefinitely.
     pub fn clone_timeout(&self, timeout_ms: u32) -> Result<Self> {
-        Self::new(self.connection.clone(), timeout_ms)
+        Self::new_with_auth(self.connection.clone(), timeout_ms, self.authenticate)
     }
 
     pub fn connection(&self) -> &DbConnectionInfo {

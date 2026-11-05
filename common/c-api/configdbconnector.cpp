@@ -18,6 +18,17 @@ SWSSResult SWSSConfigDBConnector_new(uint8_t use_unix_socket_path, const char *n
     });
 }
 
+SWSSResult SWSSConfigDBConnector_new_with_auth(uint8_t use_unix_socket_path, const char *netns,
+    uint8_t authenticate, SWSSConfigDBConnector *outConnector) {
+    if (outConnector) *outConnector = nullptr;
+    SWSSTry({
+        if (!outConnector || use_unix_socket_path > 1 || authenticate > 1)
+            throw invalid_argument("Invalid authenticated connector constructor arguments");
+        *outConnector = (SWSSConfigDBConnector) new ConfigDBConnector_Native(use_unix_socket_path != 0,
+            netns ? netns : "", authenticate != 0);
+    });
+}
+
 SWSSResult SWSSConfigDBConnector_free(SWSSConfigDBConnector configDb) {
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdelete-non-virtual-dtor"
