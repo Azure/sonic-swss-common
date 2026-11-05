@@ -1,3 +1,4 @@
 common/*.h usr/include/swss
 common/c-api/*.h usr/include/swss/c-api
 pyext/swsscommon.i usr/share/swss
+goext/redisconn/dial.go usr/share/swss/go/redisconn
