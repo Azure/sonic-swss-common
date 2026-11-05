@@ -35,6 +35,7 @@ tests_tests_SOURCES = tests/redis_ut.cpp                \
                       tests/status_code_util_test.cpp   \
                       tests/saiaclschema_ut.cpp         \
                       tests/notification_queue_ut.cpp   \
+                      tests/notification_consumer_inprocess_ut.cpp \
                       tests/countertable_ut.cpp         \
                       tests/timer_ut.cpp                \
                       tests/cli_ut.cpp                  \
