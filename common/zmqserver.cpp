@@ -236,15 +236,7 @@ void ZmqServer::bind()
         zmq_setsockopt(m_socket, ZMQ_BINDTODEVICE, m_vrf.c_str(), m_vrf.length());
     }
 
-    int rc = zmq_bind(m_socket, m_endpoint.c_str());
-    if (rc != 0)
-    {
-        SWSS_LOG_THROW("zmq_bind failed on endpoint: %s, zmqerrno: %d",
-            m_endpoint.c_str(),
-            zmq_errno());
-    }
-
-    SWSS_LOG_DEBUG("ZmqServer bind to endpoint: %s", m_endpoint.c_str());
+    SWSS_LOG_NOTICE("ZmqServer socket created, actual bind to %s will occur in mqPollThread to prevent blocking", m_endpoint.c_str());
 
     startMqPollThread();
 }
@@ -301,14 +293,25 @@ void ZmqServer::mqPollThread()
     SWSS_LOG_ENTER();
     SWSS_LOG_NOTICE("mqPollThread begin");
 
+    SWSS_LOG_NOTICE("Attempting to bind to zmq endpoint: %s", m_endpoint.c_str());
+    int bindStatus = zmq_bind(m_socket, m_endpoint.c_str());
+    if (bindStatus != 0)
+    {
+        SWSS_LOG_THROW("zmq_bind failed on endpoint: %s, zmqerrno: %d",
+            m_endpoint.c_str(),
+            zmq_errno());
+    }
+    else
+    {
+        SWSS_LOG_NOTICE("Successfully bound to zmq endpoint: %s", m_endpoint.c_str());
+    }
+
     // zmq_poll will use less CPU
     zmq_pollitem_t poll_item;
     poll_item.fd = 0;
     poll_item.socket = m_socket;
     poll_item.events = ZMQ_POLLIN;
     poll_item.revents = 0;
-
-    SWSS_LOG_NOTICE("bind to zmq endpoint: %s", m_endpoint.c_str());
     while (m_runThread)
     {
         m_allowZmqPoll = false;
