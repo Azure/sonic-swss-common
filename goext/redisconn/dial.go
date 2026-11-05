@@ -2,11 +2,10 @@
 package redisconn
 
 /*
-#cgo CFLAGS: -I${SRCDIR}/../../common/c-api
 #cgo LDFLAGS: -lswsscommon
 #include <stdlib.h>
 #include <errno.h>
-#include "redissocket.h"
+#include <swss/c-api/redissocket.h>
 */
 import "C"
 
