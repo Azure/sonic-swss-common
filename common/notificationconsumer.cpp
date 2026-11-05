@@ -103,6 +103,11 @@ std::string swss::NotificationConsumer::buildWireMessage(
     return JSon::buildJson(wireValues);
 }
 
+/*
+ * Admit one wire-format message: count it, apply the op allowlist, then push
+ * it onto the queue.  Shared by the Redis path (processReply) and the
+ * in-process path (send()).  The caller must hold m_queueMutex.
+ */
 void swss::NotificationConsumer::admitWireMessageLocked(const std::string &msg)
 {
     m_received.fetch_add(1, std::memory_order_relaxed);
@@ -110,6 +115,11 @@ void swss::NotificationConsumer::admitWireMessageLocked(const std::string &msg)
     if (!m_op_allowlist.empty())
     {
         auto op = peekOp(msg);
+        // Drop messages whose op is not in the allowlist before they
+        // consume queue memory.  This is the cross-fanout defense for
+        // shared channels like "NOTIFICATIONS": each subscriber
+        // declares exactly which ops its doTask cares about and
+        // silently drops the rest at admission instead of after pop.
         if (op.empty() || m_op_allowlist.find(op) == m_op_allowlist.end())
         {
             m_dropped_allowlist.fetch_add(1, std::memory_order_relaxed);
