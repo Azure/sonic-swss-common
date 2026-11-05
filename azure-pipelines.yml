@@ -125,6 +125,7 @@ stages:
     parameters:
       repo: sonic-sairedis
       arch: amd64
+      pool: sonicso1ES-amd64
       timeout: 90
       artifact_name: sonic-sairedis-${{ parameters.debian_version }}
       syslog_artifact_name: sonic-sairedis.syslog
