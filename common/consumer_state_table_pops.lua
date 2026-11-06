@@ -13,6 +13,11 @@ for i = 1, n do
    end
    -- Push the new set of field/value for this key in table
    local fieldvalues = redis.call('HGETALL', stateprefix..tablename..key)
+   if num == 1 and next(fieldvalues) then
+      -- If we have DEL request and SET request, we will return both requests
+      -- DEL request will come first before the SET request
+      table.insert(ret, {key, {}})
+   end
    table.insert(ret, {key, fieldvalues})
    for i = 1, #fieldvalues, 2 do
       redis.call('HSET', tablename..key, fieldvalues[i], fieldvalues[i + 1])

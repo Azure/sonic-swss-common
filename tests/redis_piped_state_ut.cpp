@@ -325,12 +325,16 @@ TEST(ConsumerStateTable, async_set_del_set)
     {
         int ret = cs.select(&selectcs);
         EXPECT_EQ(ret, Select::OBJECT);
-        KeyOpFieldsValuesTuple kco;
-        c.pop(kco);
-        EXPECT_EQ(kfvKey(kco), key);
-        EXPECT_EQ(kfvOp(kco), "SET");
-
-        auto fvs = kfvFieldsValues(kco);
+        std::deque<KeyOpFieldsValuesTuple> vkco;
+        c.pops(vkco);
+        ASSERT_EQ(vkco.size(), 2);
+        EXPECT_EQ(kfvKey(vkco[0]), key);
+        EXPECT_EQ(kfvOp(vkco[0]), "DEL");
+        auto fvs = kfvFieldsValues(vkco[0]);
+        EXPECT_EQ(fvs.size(), 0);
+        EXPECT_EQ(kfvKey(vkco[1]), key);
+        EXPECT_EQ(kfvOp(vkco[1]), "SET");
+        fvs = kfvFieldsValues(vkco[1]);
         EXPECT_EQ(fvs.size(), (unsigned int)maxNumOfFields);
 
         map<string, string> mm;
