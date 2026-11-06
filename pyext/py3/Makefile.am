@@ -1,4 +1,4 @@
-pkgpython3_PYTHON = pyext/py3/swsscommon.py pyext/py3/__init__.py
+pkgpython3_PYTHON = pyext/py3/swsscommon.py pyext/py3/__init__.py pyext/py3/redis.py
 pkgpy3exec_LTLIBRARIES = pyext/py3/_swsscommon.la
 
 pyext_py3__swsscommon_la_SOURCES = pyext/py3/swsscommon_wrap.cpp

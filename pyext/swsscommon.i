@@ -19,6 +19,13 @@
 
 #include "schema.h"
 #include "dbconnector.h"
+#include "redissocket.h"
+#include "redisauth.h"
+#if defined(PY_MAJOR_VERSION) && PY_MAJOR_VERSION < 3
+#define PyExc_PermissionError PyExc_RuntimeError
+#define PyExc_TimeoutError PyExc_IOError
+#define PyExc_ConnectionError PyExc_IOError
+#endif
 #include "dbinterface.h"
 #include "sonicv2connector.h"
 #include "pubsub.h"
@@ -270,6 +277,30 @@ T castSelectableObj(swss::Selectable *temp)
 
 %include "schema.h"
 %include "dbconnector.h"
+#ifdef SWIGPYTHON
+%exception swss::openRedisUnixSocket {
+    try {
+        struct Threads {
+            PyThreadState *saved;
+            Threads() : saved(PyEval_SaveThread()) {}
+            ~Threads() { PyEval_RestoreThread(saved); }
+        } threads;
+        $action
+    } catch (const swss::RedisAuthenticationError& e) {
+        PyErr_SetString(PyExc_PermissionError, e.what()); SWIG_fail;
+    } catch (const std::invalid_argument& e) {
+        PyErr_SetString(PyExc_ValueError, e.what()); SWIG_fail;
+    } catch (const std::system_error& e) {
+        PyErr_SetString(e.code() == std::make_error_code(std::errc::timed_out)
+            ? PyExc_TimeoutError : PyExc_ConnectionError, e.what()); SWIG_fail;
+    } catch (const swss::RedisError& e) {
+        PyErr_SetString(PyExc_ConnectionError, e.what()); SWIG_fail;
+    } catch (const std::exception& e) {
+        PyErr_SetString(PyExc_RuntimeError, e.what()); SWIG_fail;
+    }
+}
+#endif
+%include "redissocket.h"
 #ifdef ENABLE_YANG_MODULES
 %include "cfg_schema.h"
 // DefaultValueHelper exposes libyang schema-node pointers (lys_node* /
