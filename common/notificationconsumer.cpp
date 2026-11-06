@@ -1,4 +1,5 @@
 #include "notificationconsumer.h"
+#include "redisauth.h"
 
 #include <iostream>
 #include <deque>
@@ -80,11 +81,7 @@ void swss::NotificationConsumer::subscribeWithRetry()
             subscribe();
             break;
         }
-        catch (const RedisAuthError&)
-        {
-            throw;
-        }
-        catch (const RedisDescriptorError&)
+        catch (const RedisAuthenticationError&)
         {
             throw;
         }
@@ -99,8 +96,9 @@ void swss::NotificationConsumer::subscribe()
 {
     SWSS_LOG_ENTER();
 
-    /* Create new new context to DB */
-    if (m_db->getContext()->connection_type == REDIS_CONN_TCP)
+    if (m_db->authenticationEnabled())
+        m_subscribe.reset(m_db->newConnector(NOTIFICATION_SUBSCRIBE_TIMEOUT));
+    else if (m_db->getContext()->connection_type == REDIS_CONN_TCP)
         m_subscribe = std::make_unique<DBConnector>(m_db->getDbId(),
                                       m_db->getContext()->tcp.host,
                                       m_db->getContext()->tcp.port,

@@ -14,7 +14,6 @@ SWIG_FLAG += -DSWIGWORDSIZE64
 endif
 
 CLEANFILES =
-EXTRA_DIST =
 
 include common/Makefile.am
 include pyext/Makefile.am
