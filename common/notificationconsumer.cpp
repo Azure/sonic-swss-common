@@ -138,20 +138,37 @@ void swss::NotificationConsumer::send(const std::string &op,
 {
     SWSS_LOG_ENTER();
 
+    // send() is called from SAI callback threads, where an escaping
+    // exception would terminate the process.  It therefore never throws:
+    // failures are logged and the notification is dropped.
     if (!m_in_process)
     {
-        SWSS_LOG_THROW("NotificationConsumer::send on Redis-subscribe consumer (channel %s)",
-                       m_channel.c_str());
+        SWSS_LOG_ERROR("NotificationConsumer::send on Redis-subscribe consumer (channel %s), dropping op %s",
+                       m_channel.c_str(), op.c_str());
+        return;
     }
 
-    const auto wire = buildWireMessage(op, data, values);
-
+    try
     {
-        std::lock_guard<std::mutex> lock(m_queueMutex);
-        admitWireMessageLocked(wire);
-    }
+        const auto wire = buildWireMessage(op, data, values);
 
-    m_selectableEvent->notify();
+        {
+            std::lock_guard<std::mutex> lock(m_queueMutex);
+            admitWireMessageLocked(wire);
+        }
+
+        m_selectableEvent->notify();
+    }
+    catch (const std::exception &e)
+    {
+        SWSS_LOG_ERROR("NotificationConsumer::send failed on channel %s, dropping op %s: %s",
+                       m_channel.c_str(), op.c_str(), e.what());
+    }
+    catch (...)
+    {
+        SWSS_LOG_ERROR("NotificationConsumer::send failed on channel %s, dropping op %s: unknown exception",
+                       m_channel.c_str(), op.c_str());
+    }
 }
 
 void swss::NotificationConsumer::notifyPending()
@@ -307,6 +324,10 @@ void swss::NotificationConsumer::processReply(redisReply *reply)
 
 void swss::NotificationConsumer::setStatsLabel(const std::string &label)
 {
+    // m_stats_label is read under m_queueMutex on the admission path, so
+    // write it under the same lock.
+    std::lock_guard<std::mutex> lock(m_queueMutex);
+
     m_stats_label = label;
     // If the underlying queue is LruDedup, propagate the label so the
     // queue-side stats / HWM lines use the same identifier.
@@ -320,6 +341,10 @@ void swss::NotificationConsumer::setStatsLabel(const std::string &label)
 
 void swss::NotificationConsumer::setOpAllowList(std::unordered_set<std::string> ops)
 {
+    // m_op_allowlist is read under m_queueMutex on the admission path, so
+    // write it under the same lock.
+    std::lock_guard<std::mutex> lock(m_queueMutex);
+
     m_op_allowlist = std::move(ops);
     SWSS_LOG_NOTICE("NotificationConsumer[%s]: op allowlist set to %zu entries",
                     (m_stats_label.empty() ? m_channel : m_stats_label).c_str(),

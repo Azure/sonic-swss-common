@@ -249,6 +249,8 @@ public:
 
     // Thread-safe: enqueue from libsairedis notification callback thread.
     // Only valid for in-process consumers (isInProcessDelivery()).
+    // Never throws: on a Redis-subscribed consumer, or on any internal
+    // failure, the notification is logged and dropped.
     void send(const std::string &op,
               const std::string &data,
               const std::vector<FieldValueTuple> &values);
@@ -286,7 +288,7 @@ public:
     // both the consumer's periodic stats line and the internal LruDedup
     // queue's HWM / stats lines use this label instead of the bare
     // channel name.  Empty (default) preserves legacy channel-only
-    // logging.
+    // logging.  Thread-safe with respect to send() and the admission path.
     void setStatsLabel(const std::string &label);
 
     // Restrict which messages are admitted into the internal queue.
@@ -302,6 +304,9 @@ public:
     // queue memory.  This is the consumer-side defense against pub/sub
     // fanout on the "NOTIFICATIONS" channel, where every subscriber
     // receives a copy of every message even if it only cares about one op.
+    //
+    // Thread-safe with respect to send() and the admission path: it takes
+    // the same lock the allowlist is read under.
     void setOpAllowList(std::unordered_set<std::string> ops);
 
     // Snapshot of admission counters.  Lock-free.
