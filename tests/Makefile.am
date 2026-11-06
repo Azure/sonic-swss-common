@@ -29,6 +29,7 @@ tests_tests_SOURCES = tests/redis_ut.cpp                \
                       tests/redis_multi_ns_ut.cpp       \
                       tests/redis_smartswitch_ut.cpp    \
                       tests/fdb_flush.cpp               \
+                      tests/fdb_flush_scan.cpp          \
                       tests/stringutility_ut.cpp        \
                       tests/redisutility_ut.cpp         \
                       tests/boolean_ut.cpp              \
