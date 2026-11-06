@@ -32,10 +32,17 @@ resources:
     type: github
     name: sonic-net/sonic-sairedis
     endpoint: sonic-net
+    ref: refs/heads/master
   - repository: sonic-swss
     type: github
     name: sonic-net/sonic-swss
     endpoint: sonic-net
+    ref: refs/heads/master
+  - repository: sonic_swss_common
+    type: github
+    name: sonic-net/sonic-swss-common
+    endpoint: sonic-net
+    ref: refs/heads/master
 
 parameters:
   - name: debian_version
@@ -114,49 +121,70 @@ stages:
   dependsOn: Build
   condition: succeeded('Build')
   jobs:
-  - template: .azure-pipelines/build-sairedis-template.yml
+  - template: .azure-pipelines/build-template.yml@sonic-sairedis
     parameters:
+      repo: sonic-sairedis
       arch: amd64
-      swss_common_artifact_name: sonic-swss-common-${{ parameters.debian_version }}
+      pool: sonicso1ES-amd64
+      timeout: 90
       artifact_name: sonic-sairedis-${{ parameters.debian_version }}
       syslog_artifact_name: sonic-sairedis.syslog
       debian_version: ${{ parameters.debian_version }}
+      staged_upstreams:
+        - artifact: sonic-swss-common-${{ parameters.debian_version }}
+          name: sonic-swss-common
 
 - stage: BuildSwss
   dependsOn: BuildSairedis
   condition: succeeded('BuildSairedis')
   jobs:
-  - template: .azure-pipelines/build-swss-template.yml
+  - template: .azure-pipelines/build-template.yml@sonic-swss
     parameters:
+      repo: sonic-swss
       arch: amd64
       pool: sonicso1ES-amd64
       # sonic-swss is a large compile that intermittently exceeds the 90m default;
       # give it more headroom to avoid spurious timeouts.
       timeout: 120
-      swss_common_artifact_name: sonic-swss-common-${{ parameters.debian_version }}
-      sairedis_artifact_name: sonic-sairedis-${{ parameters.debian_version }}
       artifact_name: sonic-swss-${{ parameters.debian_version }}
       debian_version: ${{ parameters.debian_version }}
+      staged_upstreams:
+        - artifact: sonic-swss-common-${{ parameters.debian_version }}
+          name: sonic-swss-common
+        - artifact: sonic-sairedis-${{ parameters.debian_version }}
+          name: sonic-sairedis
 
 - stage: BuildDocker
   dependsOn: BuildSwss
   condition: succeeded('BuildSwss')
   jobs:
-  - template: .azure-pipelines/build-docker-sonic-vs-template.yml
+  - template: .azure-pipelines/build-docker-sonic-vs-template.yml@sonic-swss
     parameters:
+      repo: sonic-swss
       swss_common_artifact_name: sonic-swss-common-${{ parameters.debian_version }}
+      swss_common_current_run: true
       sairedis_artifact_name: sonic-sairedis-${{ parameters.debian_version }}
+      sairedis_current_run: true
       swss_artifact_name: sonic-swss-${{ parameters.debian_version }}
       artifact_name: docker-sonic-vs
+      include_gcov: false
+      include_vpp: true
 
 - stage: Test
   dependsOn: BuildDocker
   condition: succeeded('BuildDocker')
   jobs:
-  - template: .azure-pipelines/test-docker-sonic-vs-template.yml
+  - template: .azure-pipelines/test-docker-sonic-vs-template.yml@sonic-swss
     parameters:
+      repo: sonic-swss
+      timeout: 360
       log_artifact_name: log
       debian_version: ${{ parameters.debian_version }}
+      pytest_params: '--force-flaky --force-recreate-dvs'
+      continue_on_error: ${{ ne(variables['Build.Reason'], 'PullRequest') }}
+      staged_upstreams:
+        - artifact: sonic-swss-common.amd64.ubuntu22_04
+          name: sonic-swss-common-test-host
 
 - stage: BuildenvSetupUnitTests
   # Runs the ci/buildenv_setup unit tests. Independent (dependsOn: []) so it runs in
