@@ -20,7 +20,7 @@ std::string SonicV2Connector_Native::getNamespace() const
 
 void SonicV2Connector_Native::connect(const std::string& db_name, bool retry_on)
 {
-    if (m_use_unix_socket_path || get_db_port(db_name) == 0)
+    if (m_use_unix_socket_path)
     {
         m_dbintf.set_redis_kwargs(get_db_socket(db_name), "", 0);
     }

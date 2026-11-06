@@ -80,8 +80,6 @@ private:
     void _onetime_connect(int dbId, const std::string& dbName);
     // Keep reconnecting to Database 'dbId' until success
     void _persistent_connect(int dbId, const std::string& dbName);
-    void _connect(int dbId, const std::string& dbName, bool retry,
-                  const std::string& unixPath, const std::string& host, int port);
 
     // Redis keyspace notifications must be enabled by server configuration before
     // callers subscribe through this interface.
