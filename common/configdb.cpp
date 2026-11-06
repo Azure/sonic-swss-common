@@ -1,12 +1,109 @@
+#include <csignal>
+#include <unistd.h>
 #include <boost/algorithm/string.hpp>
+#include <chrono>
 #include <map>
 #include <vector>
 #include "configdb.h"
 #include "pubsub.h"
 #include "converter.h"
+#include "logger.h"
 
 using namespace std;
 using namespace swss;
+
+namespace {
+
+// SIGINT support for the wait_for_init_indicator loop.
+// The previous handler is forwarded to and restored when the wait ends.
+volatile sig_atomic_t g_received_sigint = 0;
+struct sigaction g_old_sigint_action;
+bool g_sigint_handler_installed = false;
+
+int elapsed_seconds_since(const chrono::steady_clock::time_point& start)
+{
+    return static_cast<int>(chrono::duration_cast<chrono::seconds>(
+            chrono::steady_clock::now() - start).count());
+}
+
+void print_blocked_on_db_init(const string& db_name, int waited_sec)
+{
+    fprintf(stderr, "Waiting for %s to be initialized (%d seconds so far); "
+                    "config initialization may have failed -- check "
+                    "'journalctl -u config-setup' and syslog\n",
+                    db_name.c_str(), waited_sec);
+    fflush(stderr);
+}
+
+void log_blocked_on_db_init(const string& db_name, int waited_sec, int escalate_sec)
+{
+    const char *indicator = ConfigDBConnector_Native::INIT_INDICATOR;
+    if (waited_sec >= escalate_sec)
+    {
+        SWSS_LOG_ERROR("Blocked for %d seconds waiting for %s in %s -- config "
+                       "initialization (config-setup.service / config reload / "
+                       "config load_minigraph) has most likely failed or crashed, "
+                       "leaving %s empty or partially populated. While %s is unset, "
+                       "this process is blocked; other %s consumers such as "
+                       "swss/orchagent cannot start or reconcile; on cold boot, "
+                       "nothing is programmed on the ASIC (no ports, VLANs, or "
+                       "routes); after a mid-life config wipe, the ASIC keeps "
+                       "forwarding on stale state that can no longer be updated. "
+                       "Diagnose: 'sonic-db-cli %s GET %s', "
+                       "'journalctl -u config-setup -u swss'. "
+                       "Recover: fix the config source and rerun "
+                       "'config reload' or 'config load_minigraph'; on success all "
+                       "waiting processes will unblock immediately, no reboot needed.",
+                       waited_sec, indicator, db_name.c_str(),
+                       db_name.c_str(), indicator, db_name.c_str(),
+                       db_name.c_str(), indicator);
+    }
+    else
+    {
+        SWSS_LOG_WARN("Still waiting for %s in %s after %d seconds; "
+                      "this process is blocked until it is set",
+                      indicator, db_name.c_str(), waited_sec);
+    }
+}
+
+void sigint_handler(int signo)
+{
+    // Forward signal only when there's an actual function to forward to.
+    if (g_old_sigint_action.sa_handler != SIG_IGN &&
+        g_old_sigint_action.sa_handler != SIG_DFL)
+    {
+        g_old_sigint_action.sa_handler(signo);
+    }
+    g_received_sigint = 1;
+}
+
+void install_sigint_handler()
+{
+    g_received_sigint = 0;
+    struct sigaction new_action = {};
+    new_action.sa_handler = sigint_handler;
+    new_action.sa_flags = 0;
+
+    if (sigaction(SIGINT, &new_action, &g_old_sigint_action))
+    {
+        // Not fatal in a library: the wait keeps working, it is just not
+        // interruptible by Ctrl+C.
+        SWSS_LOG_ERROR("failed to setup SIGINT handler while waiting for ConfigDB init");
+        return;
+    }
+    g_sigint_handler_installed = true;
+}
+
+void restore_sigint_handler()
+{
+    if (g_sigint_handler_installed)
+    {
+        sigaction(SIGINT, &g_old_sigint_action, nullptr);
+        g_sigint_handler_installed = false;
+    }
+}
+
+} // anonymous namespace
 
 ConfigDBConnector_Native::ConfigDBConnector_Native(bool use_unix_socket_path, const char *netns)
     : SonicV2Connector_Native(use_unix_socket_path, netns)
@@ -23,38 +120,71 @@ void ConfigDBConnector_Native::db_connect(string db_name, bool wait_for_init, bo
 
     if (wait_for_init)
     {
-        auto& client = get_redis_client(m_db_name);
-        auto pubsub = make_shared<PubSub>(&client);
-        auto initialized = client.get(INIT_INDICATOR);
-        if (!initialized || initialized->empty())
-        {
-            string pattern = "__keyspace@" + to_string(get_dbid(m_db_name)) +  "__:" + INIT_INDICATOR;
-            pubsub->psubscribe(pattern);
-            for (;;)
-            {
-                auto item = pubsub->listen_message();
-                if (item["type"] == "pmessage")
-                {
-                    string channel = item["channel"];
-                    size_t pos = channel.find(':');
-                    string key;
-                    if (pos != string::npos)
-                    {
-                        key = channel.substr(pos + 1);
-                    }
-                    if (key == INIT_INDICATOR)
-                    {
-                        initialized = client.get(INIT_INDICATOR);
-                        if (initialized && !initialized->empty())
-                        {
-                            break;
-                        }
-                    }
-                }
-            }
-            pubsub->punsubscribe(pattern);
-        }
+        wait_for_init_indicator();
     }
+}
+
+void ConfigDBConnector_Native::wait_for_init_indicator()
+{
+    wait_for_init_indicator(WaitForInitSchedule());
+}
+
+// Block until INIT_INDICATOR is set in the db, warning periodically to
+// syslog (and to the terminal when stderr is a tty) while blocked.
+void ConfigDBConnector_Native::wait_for_init_indicator(const WaitForInitSchedule& schedule)
+{
+    auto& client = get_redis_client(m_db_name);
+    auto is_initialized = [&]() {
+        auto initialized = client.get(INIT_INDICATOR);
+        return initialized && !initialized->empty();
+    };
+    if (is_initialized())
+    {
+        return;
+    }
+
+    // Subscribe to INIT_INDICATOR message.
+    auto pubsub = make_shared<PubSub>(&client);
+    string pattern = "__keyspace@" + to_string(get_dbid(m_db_name)) +  "__:" + INIT_INDICATOR;
+    pubsub->psubscribe(pattern);
+
+    // Poll for INIT_INDICATOR indefinitely, with periodic warning messages.
+    const bool stderr_is_tty = isatty(fileno(stderr)) != 0;
+    const auto start = chrono::steady_clock::now();
+    int next_warn_sec = schedule.first_warn_sec;
+    int next_tty_sec = schedule.tty_interval_sec;
+    // But respect SIGINT.
+    install_sigint_handler();
+    while (!is_initialized())
+    {
+        // Throw on SIGINT.
+        if (g_received_sigint)
+        {
+            restore_sigint_handler();
+            throw InterruptedError("Interrupted while waiting for " +
+                                   string(INIT_INDICATOR) + " in " + m_db_name);
+        }
+        int waited_sec = elapsed_seconds_since(start);
+        // Print and/or log warning messages if due.
+        if (stderr_is_tty && waited_sec >= next_tty_sec)
+        {
+            print_blocked_on_db_init(m_db_name, waited_sec);
+            next_tty_sec = waited_sec + schedule.tty_interval_sec;
+        }
+        if (waited_sec >= next_warn_sec)
+        {
+            log_blocked_on_db_init(m_db_name, waited_sec, schedule.escalate_sec);
+            next_warn_sec = waited_sec + schedule.warn_interval_sec;
+        }
+        // Poll until the next warning message is due, or interrupted by
+        // signals. We throw on SIGINT in the next iteration. Unrelated signals
+        // merely wake the poll early and the wait continues.
+        int next_due_sec = stderr_is_tty ? min(next_warn_sec, next_tty_sec) : next_warn_sec;
+        int timeout_sec = max(1, next_due_sec - waited_sec);
+        pubsub->get_message(timeout_sec, /*interrupt_on_signal=*/true);
+    }
+    restore_sigint_handler();
+    pubsub->punsubscribe(pattern);
 }
 
 void ConfigDBConnector_Native::connect(bool wait_for_init, bool retry_on)

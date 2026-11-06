@@ -1,11 +1,23 @@
 #pragma once
 
+#include <stdexcept>
 #include <string>
 #include <map>
 #include "sonicv2connector.h"
 #include "redistran.h"
 
 namespace swss {
+
+// Thrown when a blocking wait is interrupted by SIGINT.
+// The Python binding maps this to KeyboardInterrupt.
+class InterruptedError : public std::runtime_error
+{
+public:
+    explicit InterruptedError(const std::string& message)
+        : std::runtime_error(message)
+    {
+    }
+};
 
 class ConfigDBConnector_Native : public SonicV2Connector_Native
 {
@@ -29,6 +41,25 @@ public:
     std::string getKeySeparator() const;
     std::string getTableNameSeparator() const;
     std::string getDbName() const;
+
+#ifndef SWIG
+    // Cadence of the "still waiting for INIT_INDICATOR" messages emitted by
+    // wait_for_init_indicator(), in seconds. Defaults are production values;
+    // unit tests pass a compressed schedule to exercise every branch quickly.
+    struct WaitForInitSchedule
+    {
+        int first_warn_sec = 30;      // quiet period before first syslog warning
+        int warn_interval_sec = 300;  // cadence of subsequent syslog warnings
+        int escalate_sec = 900;       // escalate the warning to an error after this
+        int tty_interval_sec = 30;    // cadence of stderr messages when it is a tty
+    };
+
+    // Block until INIT_INDICATOR is set in the connected db, logging per
+    // the schedule while blocked. db_connect(wait_for_init=true) uses the
+    // default schedule.
+    void wait_for_init_indicator();
+    void wait_for_init_indicator(const WaitForInitSchedule& schedule);
+#endif
 
 protected:
     std::string m_table_name_separator = "|";

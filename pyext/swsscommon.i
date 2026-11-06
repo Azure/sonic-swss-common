@@ -109,6 +109,12 @@
 
         $action
     }
+    catch (const swss::InterruptedError &e)
+    {
+        // Forward SIGINT to Python as a KeyboardInterrupt.
+        PyErr_SetString(PyExc_KeyboardInterrupt, e.what());
+        SWIG_fail;
+    }
     SWIG_CATCH_STDEXCEPT // catch std::exception derivatives
     catch (...)
     {
