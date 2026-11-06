@@ -2,8 +2,6 @@
 #define __DBCONNECTOR__
 
 #include <string>
-#include <stdexcept>
-#include <system_error>
 #include <vector>
 #include <unordered_map>
 #include <utility>
@@ -23,22 +21,6 @@ namespace swss {
 
 class DBConnector;
 class PubSub;
-
-// Authentication errors must leave connection retry loops immediately.
-#ifndef SWIG
-class RedisAuthError : public std::runtime_error
-{
-public:
-    using std::runtime_error::runtime_error;
-};
-
-// Keep local descriptor failures out of connection retry loops.
-class RedisDescriptorError : public std::system_error
-{
-public:
-    using std::system_error::system_error;
-};
-#endif
 
 class RedisInstInfo
 {
@@ -199,6 +181,7 @@ public:
     ~RedisContext();
 
     redisContext *getContext() const;
+    bool authenticationEnabled() const { return m_authenticate; }
 
     /*
      * Assign a name to the Redis client used for this connection
@@ -210,12 +193,16 @@ public:
 
 protected:
     RedisContext();
+    RedisContext(const RedisContext &other, unsigned int timeout_ms);
+    void authenticateConnection(const timeval *timeout);
     void initContext(const char *host, int port, const timeval *tv);
     void initContext(const char *path, const timeval *tv);
     void setContext(redisContext *ctx);
 
 private:
+    void cloneContext(const RedisContext &other, const timeval *timeout);
     redisContext *m_conn;
+    bool m_authenticate = false;
 };
 
 class DBConnector : public RedisContext
@@ -237,6 +224,13 @@ public:
     DBConnector(const std::string &dbName, unsigned int timeout_ms, bool isTcpConn = false);
     DBConnector(const std::string &dbName, unsigned int timeout_ms, bool isTcpConn, const std::string &netns);
     DBConnector(const std::string &dbName, unsigned int timeout_ms, bool isTcpConn, const SonicDBKey &key);
+    // Explicit local writer authentication. Existing overloads remain unauthenticated.
+    // An empty namespace selects the default namespace. authenticate=false retains
+    // the legacy path; true requires isTcpConn=false and authenticates before SELECT.
+    DBConnector(const std::string &dbName, unsigned int timeout_ms, bool isTcpConn,
+                const std::string &netns, bool authenticate);
+    DBConnector(const std::string &dbName, unsigned int timeout_ms, bool isTcpConn,
+                const SonicDBKey &key, bool authenticate);
     DBConnector& operator=(const DBConnector&) = delete;
 
     int getDbId() const;
@@ -331,6 +325,7 @@ public:
 
     std::map<std::string, std::map<std::string, std::map<std::string, std::string>>> getall();
 private:
+    DBConnector(const DBConnector &other, unsigned int timeout_ms);
     void setNamespace(const std::string &netns);
     void setDBKey(const SonicDBKey &key);
 

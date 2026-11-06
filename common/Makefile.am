@@ -51,6 +51,8 @@ common_libswsscommon_la_SOURCES = \
     common/logger.cpp                \
     common/redisreply.cpp            \
     common/configdb.cpp              \
+    common/redisauth.cpp              \
+    common/redisauth.h                \
     common/dbconnector.cpp           \
     common/dbinterface.cpp           \
     common/sonicv2connector.cpp      \
