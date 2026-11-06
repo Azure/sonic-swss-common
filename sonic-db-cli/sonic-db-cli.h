@@ -13,6 +13,7 @@ struct Options
     bool m_help = false;
     bool m_unixsocket = false;
     bool m_json = false;
+    bool m_authenticate = false;
     std::string m_namespace;
     std::string m_db_or_op;
     std::vector<std::string> m_cmd;
@@ -32,18 +33,21 @@ int executeCommands(
     std::vector<std::string>& commands,
     const std::string& netns,
     bool isTcpConn,
-    bool useJson = false);
+    bool useJson = false,
+    bool authenticate = false);
 
 std::string handleSingleOperation(
     const std::string& netns,
     const std::string& db_name,
     const std::string& operation,
-    bool isTcpConn);
+    bool isTcpConn,
+    bool authenticate = false);
 
 int handleAllInstances(
     const std::string& netns,
     const std::string& operation,
-    bool isTcpConn);
+    bool isTcpConn,
+    bool authenticate = false);
 
 void parseCliArguments(
     int argc,
