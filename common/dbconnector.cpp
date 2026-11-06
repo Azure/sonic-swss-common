@@ -11,6 +11,7 @@
 #include "logger.h"
 
 #include "common/dbconnector.h"
+#include "common/redisauth.h"
 #include "common/redisreply.h"
 #include "common/redispipeline.h"
 #include "common/pubsub.h"
@@ -553,25 +554,51 @@ RedisContext::RedisContext()
 }
 
 RedisContext::RedisContext(const RedisContext &other)
+    : RedisContext()
 {
-    auto octx = other.getContext();
-    const char *unixPath = octx->unix_sock.path;
-    if (unixPath)
-    {
 #if HIREDIS_MAJOR >= 1
-        initContext(unixPath, octx->connect_timeout);
+    cloneContext(other, other.getContext()->connect_timeout);
 #else
-        initContext(unixPath, octx->timeout);
+    cloneContext(other, other.getContext()->timeout);
 #endif
-    }
-    else
+}
+
+RedisContext::RedisContext(const RedisContext &other, unsigned int timeout_ms)
+    : RedisContext()
+{
+    const timeval timeout{static_cast<time_t>(timeout_ms / 1000),
+                          static_cast<suseconds_t>((timeout_ms % 1000) * 1000)};
+    cloneContext(other, timeout_ms ? &timeout : nullptr);
+}
+
+void RedisContext::cloneContext(const RedisContext &other, const timeval *timeout)
+{
+    const auto *context = other.getContext();
+    try
     {
-#if HIREDIS_MAJOR >= 1
-        initContext(octx->tcp.host, octx->tcp.port, octx->connect_timeout);
-#else
-        initContext(octx->tcp.host, octx->tcp.port, octx->timeout);
-#endif
+        if (context->connection_type == REDIS_CONN_UNIX)
+            initContext(context->unix_sock.path, timeout);
+        else
+            initContext(context->tcp.host, context->tcp.port, timeout);
+        if (other.m_authenticate) authenticateConnection(timeout);
     }
+    catch (...)
+    {
+        if (m_conn) redisFree(m_conn);
+        m_conn = nullptr;
+        throw;
+    }
+}
+
+void RedisContext::authenticateConnection(const timeval *timeout)
+{
+    if (timeout && redisSetTimeout(m_conn, *timeout) != REDIS_OK)
+        throw RedisAuthenticationError("Cannot set Redis authentication timeout");
+    authenticateRedisConnection(m_conn);
+    const timeval unlimited{};
+    if (timeout && redisSetTimeout(m_conn, unlimited) != REDIS_OK)
+        throw RedisAuthenticationError("Cannot clear Redis authentication timeout");
+    m_authenticate = true;
 }
 
 void RedisContext::initContext(const char *host, int port, const timeval *tv)
@@ -728,6 +755,34 @@ DBConnector::DBConnector(const string& dbName, unsigned int timeout_ms, bool isT
     // Empty constructor
 }
 
+DBConnector::DBConnector(const string& dbName, unsigned int timeout_ms, bool isTcpConn,
+                         const string& netns, bool authenticate)
+    : DBConnector(dbName, timeout_ms, isTcpConn, SonicDBKey(netns), authenticate)
+{
+}
+
+DBConnector::DBConnector(const string& dbName, unsigned int timeout_ms, bool isTcpConn,
+                         const SonicDBKey& key, bool authenticate)
+    : m_dbId(SonicDBConfig::getDbId(dbName, key)), m_dbName(dbName), m_key(key)
+{
+    if (authenticate && isTcpConn)
+        throw RedisAuthenticationError("Redis writer authentication requires an explicit Unix socket");
+    const timeval timeout = ms_to_timeval(timeout_ms);
+    const timeval *limit = timeout_ms ? &timeout : nullptr;
+    if (isTcpConn)
+        initContext(SonicDBConfig::getDbHostname(dbName, key).c_str(), SonicDBConfig::getDbPort(dbName, key), limit);
+    else
+        initContext(SonicDBConfig::getDbSock(dbName, key).c_str(), limit);
+    if (authenticate) authenticateConnection(limit);
+    select(this);
+}
+
+DBConnector::DBConnector(const DBConnector& other, unsigned int timeout_ms)
+    : RedisContext(other, timeout_ms), m_dbId(other.m_dbId), m_dbName(other.m_dbName), m_key(other.m_key)
+{
+    select(this);
+}
+
 int DBConnector::getDbId() const
 {
     return m_dbId;
@@ -760,6 +815,7 @@ SonicDBKey DBConnector::getDBKey() const
 
 DBConnector *DBConnector::newConnector(unsigned int timeout) const
 {
+    if (authenticationEnabled()) return new DBConnector(*this, timeout);
     DBConnector *ret;
 
     if (getContext()->connection_type == REDIS_CONN_TCP)
