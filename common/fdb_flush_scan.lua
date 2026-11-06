@@ -8,55 +8,73 @@
 --
 -- This script takes no KEYS, everything is passed as ARGV:
 --   ARGV[1] - cursor to start from ("0" for a new scan)
---   ARGV[2] - COUNT hint passed to SCAN
+--   ARGV[2] - COUNT hint passed to SCAN, clamped to COUNT_MAX
 --   ARGV[3] - key pattern, e.g. "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY:*"
 --   ARGV[4] - bridge port oid to filter on, empty string means any port
---   ARGV[5] - "0" flush dynamic entries only, "1" flush (all) static entries
+--   ARGV[5] - "0" flush dynamic entries only, "1" flush static and dynamic
 --
 -- Returns { nextCursor, deletedCount }, both as strings. The caller is expected
 -- to adjust the COUNT hint between invocations so that a single call stays
 -- within a small, bounded time budget.
+--
+-- SCAN is only guaranteed to return every key that was present for the whole
+-- iteration, and it may return the same key more than once. That is fine here:
+-- the entries are deleted as they are found, and a repeated key is simply found
+-- already gone by the second DEL, which does not increase deletedCount.
 
-local cursor = ARGV[1] or "0"
-local count = ARGV[2] or "100"
-local pattern = ARGV[3]
-local portStr = ARGV[4]
-local flushType = ARGV[5]
+local CURSOR = ARGV[1] or "0"
+local COUNT = tonumber(ARGV[2] or "100")
+local PATTERN = ARGV[3]
+local PORT = ARGV[4] or ""
+local FLUSH_TYPE = ARGV[5] or "0"
 
-local result = redis.call('SCAN', cursor, 'MATCH', pattern, 'COUNT', count)
-local nextCursor = result[1]
-local keys = result[2]
+local COUNT_MAX = 10000
+
+if not string.match(CURSOR, "^%d+$") then
+   return redis.error_reply("fdb_flush_scan: invalid cursor '" .. CURSOR .. "', expected a decimal SCAN cursor")
+end
+
+if COUNT == nil or COUNT < 1 then
+   return redis.error_reply("fdb_flush_scan: invalid count '" .. (ARGV[2] or "") .. "', expected an integer >= 1")
+end
+
+if COUNT > COUNT_MAX then
+   COUNT = COUNT_MAX
+end
+
+if PATTERN == nil or PATTERN == "" then
+   return redis.error_reply("fdb_flush_scan: missing key pattern (ARGV[3])")
+end
+
+if FLUSH_TYPE ~= "0" and FLUSH_TYPE ~= "1" then
+   return redis.error_reply("fdb_flush_scan: invalid flush type '" .. FLUSH_TYPE .. "', expected \"0\" (dynamic only) or \"1\" (static and dynamic)")
+end
+
+-- "oid:0x0" is SAI_NULL_OBJECT_ID, i.e. no port filter
+if PORT == "oid:0x0" then
+   PORT = ""
+end
+
+local BATCH = redis.call('SCAN', CURSOR, 'MATCH', PATTERN, 'COUNT', COUNT)
+local nextCursor = BATCH[1]
+local keys = BATCH[2]
 local deletedCount = 0
 
 for i = 1, #keys do
-   local shouldDelete = false
+   local matched = true
 
-   if portStr == "" then
-      if flushType == "1" then
-         shouldDelete = true
-      elseif flushType == "0" then
-         local type = redis.call('HGET', keys[i], "SAI_FDB_ENTRY_ATTR_TYPE");
-         if type == "SAI_FDB_ENTRY_TYPE_DYNAMIC" then
-            shouldDelete = true
-         end
-      end
-   else
-      local bridge_port = redis.call('HGET', keys[i], "SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID");
-      if bridge_port == portStr then
-         if flushType == "1" then
-            shouldDelete = true
-         elseif flushType == "0" then
-            local type = redis.call('HGET', keys[i], "SAI_FDB_ENTRY_ATTR_TYPE");
-            if type == "SAI_FDB_ENTRY_TYPE_DYNAMIC" then
-               shouldDelete = true
-            end
-         end
-      end
+   if PORT ~= "" then
+      matched = redis.call('HGET', keys[i], "SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID") == PORT
    end
 
-   if shouldDelete then
-      redis.call('DEL', keys[i])
-      deletedCount = deletedCount + 1
+   if matched and FLUSH_TYPE == "0" then
+      matched = redis.call('HGET', keys[i], "SAI_FDB_ENTRY_ATTR_TYPE") == "SAI_FDB_ENTRY_TYPE_DYNAMIC"
+   end
+
+   if matched then
+      -- count what was actually removed, DEL returns 0 for a key that was
+      -- already deleted by a previous (possibly duplicated) SCAN result
+      deletedCount = deletedCount + redis.call('DEL', keys[i])
    end
 end
 
