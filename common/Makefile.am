@@ -142,3 +142,5 @@ common_swssloglevel_CXXFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CODE_
 common_swssloglevel_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CODE_COVERAGE_CPPFLAGS)
 common_swssloglevel_LDADD = common/libswsscommon.la $(CODE_COVERAGE_LIBS)
 common_swssloglevel_LDFLAGS = -Wl,-z,now $(LDFLAGS)
+
+common_libswsscommon_la_SOURCES += common/redisrdb.cpp common/redisrdb.h

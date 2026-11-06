@@ -19,6 +19,7 @@
 
 #include "schema.h"
 #include "dbconnector.h"
+#include "redisrdb.h"
 #include "dbinterface.h"
 #include "sonicv2connector.h"
 #include "pubsub.h"
@@ -270,6 +271,7 @@ T castSelectableObj(swss::Selectable *temp)
 
 %include "schema.h"
 %include "dbconnector.h"
+%include "redisrdb.h"
 #ifdef ENABLE_YANG_MODULES
 %include "cfg_schema.h"
 // DefaultValueHelper exposes libyang schema-node pointers (lys_node* /
