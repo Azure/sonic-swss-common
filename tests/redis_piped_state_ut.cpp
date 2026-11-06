@@ -328,9 +328,16 @@ TEST(ConsumerStateTable, async_set_del_set)
         KeyOpFieldsValuesTuple kco;
         c.pop(kco);
         EXPECT_EQ(kfvKey(kco), key);
-        EXPECT_EQ(kfvOp(kco), "SET");
+        EXPECT_EQ(kfvOp(kco), "DEL");
 
         auto fvs = kfvFieldsValues(kco);
+        EXPECT_EQ(fvs.size(), 0U);
+
+        c.pop(kco);
+        EXPECT_EQ(kfvKey(kco), key);
+        EXPECT_EQ(kfvOp(kco), "SET");
+
+        fvs = kfvFieldsValues(kco);
         EXPECT_EQ(fvs.size(), (unsigned int)maxNumOfFields);
 
         map<string, string> mm;

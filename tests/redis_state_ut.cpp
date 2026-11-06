@@ -344,9 +344,17 @@ TEST(ConsumerStateTable, set_del_set)
         KeyOpFieldsValuesTuple kco;
         c.pop(kco);
         EXPECT_EQ(kfvKey(kco), key);
-        EXPECT_EQ(kfvOp(kco), "SET");
+        /*a DEL should be seen*/
+        EXPECT_EQ(kfvOp(kco), "DEL");
 
         auto fvs = kfvFieldsValues(kco);
+        EXPECT_EQ(fvs.size(), 0U);
+
+        c.pop(kco);
+        EXPECT_EQ(kfvKey(kco), key);
+        EXPECT_EQ(kfvOp(kco), "SET");
+
+        fvs = kfvFieldsValues(kco);
         EXPECT_EQ(fvs.size(), (unsigned int)maxNumOfFields);
 
         map<string, string> mm;
@@ -451,9 +459,16 @@ TEST(ConsumerStateTable, set_pop_del_set_pop_get)
         KeyOpFieldsValuesTuple kco;
         c.pop(kco);
         EXPECT_EQ(kfvKey(kco), key);
-        EXPECT_EQ(kfvOp(kco), "SET");
+        EXPECT_EQ(kfvOp(kco), "DEL");
 
         auto fvs = kfvFieldsValues(kco);
+        EXPECT_EQ(fvs.size(), 0U);
+
+        c.pop(kco);
+        EXPECT_EQ(kfvKey(kco), key);
+        EXPECT_EQ(kfvOp(kco), "SET");
+
+        fvs = kfvFieldsValues(kco);
 
         /* size of fvs should be maxNumOfFields, no "field 1" left from first set*/
         EXPECT_EQ(fvs.size(), (unsigned int)maxNumOfFields);
