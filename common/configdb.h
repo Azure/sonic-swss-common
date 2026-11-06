@@ -12,8 +12,7 @@ class ConfigDBConnector_Native : public SonicV2Connector_Native
 public:
     static constexpr const char *INIT_INDICATOR = "CONFIG_DB_INITIALIZED";
 
-    ConfigDBConnector_Native(bool use_unix_socket_path = false, const char *netns = "");
-    ConfigDBConnector_Native(bool use_unix_socket_path, const char *netns, bool authenticate);
+    ConfigDBConnector_Native(bool use_unix_socket_path = false, const char *netns = "", bool authenticate = false);
 
     void db_connect(std::string db_name, bool wait_for_init = false, bool retry_on = false);
     void connect(bool wait_for_init = true, bool retry_on = false);
@@ -328,8 +327,7 @@ func NewConfigDBConnector(a ...interface{}) *ConfigDBConnector {
 class ConfigDBPipeConnector_Native: public ConfigDBConnector_Native
 {
 public:
-    ConfigDBPipeConnector_Native(bool use_unix_socket_path = false, const char *netns = "");
-    ConfigDBPipeConnector_Native(bool use_unix_socket_path, const char *netns, bool authenticate);
+    ConfigDBPipeConnector_Native(bool use_unix_socket_path = false, const char *netns = "", bool authenticate = false);
 
     void set_entry(std::string table, std::string key, const std::map<std::string, std::string>& data) override;
     void mod_config(const std::map<std::string, std::map<std::string, std::map<std::string, std::string>>>& data) override;

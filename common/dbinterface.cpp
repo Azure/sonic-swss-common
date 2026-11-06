@@ -9,25 +9,6 @@ using namespace std;
 using namespace std::chrono;
 using namespace swss;
 
-namespace
-{
-template<typename Connect>
-void connectAuthenticatedWithRetry(Connect connect, bool retry)
-{
-    for (;;)
-    {
-        try { connect(); return; }
-        catch (const RedisError&) { if (!retry) throw; }
-        catch (const std::system_error& error)
-        {
-            if (!retry || error.code() != std::make_error_code(std::errc::address_not_available)) throw;
-        }
-        SWSS_LOG_WARN("Retrying authenticated Redis connection in %d s", DBInterface::CONNECT_RETRY_WAIT_TIME);
-        sleep(DBInterface::CONNECT_RETRY_WAIT_TIME);
-    }
-}
-}
-
 void DBInterface::connectAuthenticated(const std::string& dbName, const SonicDBKey& key, bool retry)
 {
     if (dbName.empty()) throw invalid_argument("dbName");
@@ -38,10 +19,22 @@ void DBInterface::connectAuthenticated(const std::string& dbName, const SonicDBK
             throw invalid_argument("Close the existing connection before changing authentication or DB key");
         return;
     }
-    connectAuthenticatedWithRetry([&] {
-        m_redisClient.emplace(std::piecewise_construct, std::forward_as_tuple(dbName),
-            std::forward_as_tuple(dbName, 0, false, key, true));
-    }, retry);
+    for (;;)
+    {
+        try
+        {
+            m_redisClient.emplace(std::piecewise_construct, std::forward_as_tuple(dbName),
+                std::forward_as_tuple(dbName, 0, false, key, true));
+            return;
+        }
+        catch (const RedisError&) { if (!retry) throw; }
+        catch (const std::system_error& error)
+        {
+            if (!retry || error.code() != std::make_error_code(std::errc::address_not_available)) throw;
+        }
+        SWSS_LOG_WARN("Retrying authenticated Redis connection in %d s", CONNECT_RETRY_WAIT_TIME);
+        sleep(CONNECT_RETRY_WAIT_TIME);
+    }
 }
 
 void DBInterface::set_redis_kwargs(std::string unix_socket_path, std::string host, int port)
