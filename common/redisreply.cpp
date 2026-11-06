@@ -173,7 +173,7 @@ void RedisReply::checkReply()
 
     if (m_reply->type == REDIS_REPLY_ERROR)
     {
-        system_error ex(make_error_code(errc::io_error),
+        system_error ex(make_error_code(errc::invalid_argument),
                            m_reply->str);
         freeReplyObject(m_reply);
         m_reply = NULL;
