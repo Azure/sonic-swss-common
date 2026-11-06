@@ -2,8 +2,6 @@
 #include <stdint.h>
 #include <vector>
 #include <unistd.h>
-#include <fcntl.h>
-#include <sys/stat.h>
 #include <errno.h>
 #include <system_error>
 #include <fstream>
@@ -13,6 +11,7 @@
 #include "logger.h"
 
 #include "common/dbconnector.h"
+#include "common/redisauth.h"
 #include "common/redisreply.h"
 #include "common/redispipeline.h"
 #include "common/pubsub.h"
@@ -21,170 +20,8 @@ using json = nlohmann::json;
 using namespace std;
 using namespace swss;
 
-#ifndef REDIS_AUTH_DIR
-#define REDIS_AUTH_DIR "/run/redis-auth"
-#endif
-
 namespace {
 constexpr size_t KEY_DEL_CHUNK_SIZE = 128;
-
-struct AuthFd
-{
-    int fd;
-    ~AuthFd() { if (fd >= 0) close(fd); }
-};
-
-void checkAuthFile(int fd, bool directory, bool secret = false)
-{
-    struct stat st = {};
-    const auto unsafeSecretMode = [](mode_t mode) {
-        mode &= 07777;
-        return mode != 0400 && mode != 0600 && mode != 0440 && mode != 0640;
-    };
-    if (fstat(fd, &st) != 0 || st.st_uid != 0 ||
-        (directory ? !S_ISDIR(st.st_mode) : !S_ISREG(st.st_mode)) ||
-        (st.st_mode & (S_IWGRP | S_IWOTH)) ||
-        (secret && unsafeSecretMode(st.st_mode)))
-    {
-        throw RedisAuthError("Redis authentication file has unsafe permissions");
-    }
-}
-
-string readAuthFile(int fd, size_t maximum)
-{
-    string value;
-    char buffer[256];
-    for (;;)
-    {
-        ssize_t count = read(fd, buffer, sizeof(buffer));
-        if (count < 0 && errno == EINTR) continue;
-        if (count < 0) throw RedisAuthError("Cannot read Redis authentication file");
-        if (count == 0) break;
-        value.append(buffer, static_cast<size_t>(count));
-        if (value.size() > maximum)
-            throw RedisAuthError("Redis authentication file is too large");
-    }
-    if (value.empty()) throw RedisAuthError("Redis authentication file is empty");
-    return value;
-}
-
-void authenticateLocalWriter(redisContext *context)
-{
-    // This fixed startup-owned file authorizes credential delivery. A caller's
-    // database_config.json, environment and command line cannot redirect it.
-    AuthFd directory{open(REDIS_AUTH_DIR, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW)};
-    if (directory.fd < 0)
-    {
-        if (errno == ENOENT) return; // Feature is not enabled on this image.
-        throw RedisAuthError("Cannot open Redis authentication directory");
-    }
-    checkAuthFile(directory.fd, true);
-    AuthFd policyFile{openat(directory.fd, "local.json", O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK)};
-    if (policyFile.fd < 0)
-    {
-        if (errno == ENOENT) return;
-        throw RedisAuthError("Cannot open Redis authentication policy");
-    }
-    checkAuthFile(policyFile.fd, false);
-
-    json selected;
-    try
-    {
-        auto policies = json::parse(readAuthFile(policyFile.fd, 4096));
-        if (policies.is_object()) policies = json::array({policies});
-        if (!policies.is_array() || policies.empty())
-            throw RedisAuthError("Redis authentication policy is invalid");
-        set<string> sockets;
-        set<pair<string, int>> addresses;
-        for (const auto& policy : policies)
-        {
-            const auto username = policy.at("username").get<string>();
-            const auto socketPath = policy.at("unix_socket").get<string>();
-            const auto host = policy.at("tcp_host").get<string>();
-            const auto& portValue = policy.at("tcp_port");
-            if (!portValue.is_number_integer() || portValue < 0 || portValue > 65535 ||
-                policy.size() != 4 ||
-                username.empty() || username.size() > 128 || username.find('\0') != string::npos ||
-                socketPath.empty() || socketPath.front() != '/' || socketPath.find('\0') != string::npos ||
-                (host != "127.0.0.1" && host != "::1"))
-            {
-                throw RedisAuthError("Redis authentication policy is invalid");
-            }
-            const int port = portValue.get<int>();
-            if (!sockets.insert(socketPath).second ||
-                (port > 0 && !addresses.insert({host, port}).second))
-                throw RedisAuthError("Redis authentication policy has duplicate addresses");
-            const bool matches = context->connection_type == REDIS_CONN_UNIX
-                ? context->unix_sock.path && socketPath == context->unix_sock.path
-                : port > 0 && context->connection_type == REDIS_CONN_TCP && context->tcp.host &&
-                    host == context->tcp.host && port == context->tcp.port;
-            if (matches) selected = policy;
-        }
-    }
-    catch (const json::exception&)
-    {
-        throw RedisAuthError("Redis authentication policy is invalid");
-    }
-    if (selected.is_null()) return; // Unselected processes keep their existing behavior.
-    const auto username = selected.at("username").get<string>();
-    // TCP requires server identity verification before disclosing this password.
-    // Protected TCP is outside the local Unix socket rollout.
-    if (context->connection_type == REDIS_CONN_TCP)
-        throw RedisAuthError("Automatic Redis writer authentication requires a Unix socket");
-
-    AuthFd secrets{openat(directory.fd, "local-system", O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW)};
-    if (secrets.fd < 0) throw RedisAuthError("Cannot open Redis credential directory");
-    checkAuthFile(secrets.fd, true);
-    AuthFd secretFile{openat(secrets.fd, "writer.secret", O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK)};
-    if (secretFile.fd < 0)
-    {
-        // Read access to the protected file grants writer access. Readers do
-        // not need a second Redis account or a password of their own.
-        if (errno == EACCES && geteuid() != 0) return;
-        throw RedisAuthError("Cannot open Redis writer credential");
-    }
-    checkAuthFile(secretFile.fd, false, true);
-    string secret = readAuthFile(secretFile.fd, 128);
-    const char *argv[] = {"AUTH", username.data(), secret.data()};
-    const size_t lengths[] = {4, username.size(), secret.size()};
-    auto *reply = static_cast<redisReply *>(redisCommandArgv(context, 3, argv, lengths));
-    volatile char *bytes = &secret[0];
-    for (size_t i = 0; i < secret.size(); ++i) bytes[i] = 0;
-    if (reply == nullptr) throw RedisError("Redis authentication transport failure", context);
-    const bool accepted = reply->type == REDIS_REPLY_STATUS && reply->str &&
-                          reply->len == 2 && memcmp(reply->str, "OK", 2) == 0;
-    freeReplyObject(reply);
-    if (!accepted) throw RedisAuthError("Redis writer authentication failed");
-}
-
-void finishConnection(redisContext *&context, const string& errorPrefix)
-{
-    if (!context) throw bad_alloc();
-    try
-    {
-        if (context->err)
-            throw system_error(make_error_code(errc::address_not_available),
-                               errorPrefix + context->errstr + "(" + to_string(context->err) + ")");
-        const int flags = fcntl(context->fd, F_GETFD);
-        if (flags < 0)
-        {
-            const int error = errno;
-            throw RedisDescriptorError(error, generic_category(), "fcntl(F_GETFD) failed on Redis connection");
-        }
-        if (fcntl(context->fd, F_SETFD, flags | FD_CLOEXEC) < 0)
-        {
-            const int error = errno;
-            throw RedisDescriptorError(error, generic_category(), "fcntl(F_SETFD, FD_CLOEXEC) failed on Redis connection");
-        }
-        authenticateLocalWriter(context);
-    }
-    catch (...)
-    {
-        redisFree(context);
-        context = nullptr;
-        throw;
-    }
-}
 }
 
 
@@ -717,25 +554,51 @@ RedisContext::RedisContext()
 }
 
 RedisContext::RedisContext(const RedisContext &other)
+    : RedisContext()
 {
-    auto octx = other.getContext();
-    const char *unixPath = octx->unix_sock.path;
-    if (unixPath)
-    {
 #if HIREDIS_MAJOR >= 1
-        initContext(unixPath, octx->connect_timeout);
+    cloneContext(other, other.getContext()->connect_timeout);
 #else
-        initContext(unixPath, octx->timeout);
+    cloneContext(other, other.getContext()->timeout);
 #endif
-    }
-    else
+}
+
+RedisContext::RedisContext(const RedisContext &other, unsigned int timeout_ms)
+    : RedisContext()
+{
+    const timeval timeout{static_cast<time_t>(timeout_ms / 1000),
+                          static_cast<suseconds_t>((timeout_ms % 1000) * 1000)};
+    cloneContext(other, timeout_ms ? &timeout : nullptr);
+}
+
+void RedisContext::cloneContext(const RedisContext &other, const timeval *timeout)
+{
+    const auto *context = other.getContext();
+    try
     {
-#if HIREDIS_MAJOR >= 1
-        initContext(octx->tcp.host, octx->tcp.port, octx->connect_timeout);
-#else
-        initContext(octx->tcp.host, octx->tcp.port, octx->timeout);
-#endif
+        if (context->connection_type == REDIS_CONN_UNIX)
+            initContext(context->unix_sock.path, timeout);
+        else
+            initContext(context->tcp.host, context->tcp.port, timeout);
+        if (other.m_authenticate) authenticateConnection(timeout);
     }
+    catch (...)
+    {
+        if (m_conn) redisFree(m_conn);
+        m_conn = nullptr;
+        throw;
+    }
+}
+
+void RedisContext::authenticateConnection(const timeval *timeout)
+{
+    if (timeout && redisSetTimeout(m_conn, *timeout) != REDIS_OK)
+        throw RedisAuthenticationError("Cannot set Redis authentication timeout");
+    authenticateRedisConnection(m_conn);
+    const timeval unlimited{};
+    if (timeout && redisSetTimeout(m_conn, unlimited) != REDIS_OK)
+        throw RedisAuthenticationError("Cannot clear Redis authentication timeout");
+    m_authenticate = true;
 }
 
 void RedisContext::initContext(const char *host, int port, const timeval *tv)
@@ -749,7 +612,9 @@ void RedisContext::initContext(const char *host, int port, const timeval *tv)
         m_conn = redisConnect(host, port);
     }
 
-    finishConnection(m_conn, "Unable to connect to redis - ");
+    if (m_conn->err)
+        throw system_error(make_error_code(errc::address_not_available),
+                           "Unable to connect to redis - " + std::string(m_conn->errstr) + "(" + std::to_string(m_conn->err) + ")");
 }
 
 void RedisContext::initContext(const char *path, const timeval *tv)
@@ -763,7 +628,9 @@ void RedisContext::initContext(const char *path, const timeval *tv)
         m_conn = redisConnectUnix(path);
     }
 
-    finishConnection(m_conn, "Unable to connect to redis (unix-socket) - ");
+    if (m_conn->err)
+        throw system_error(make_error_code(errc::address_not_available),
+                           "Unable to connect to redis (unix-socket) - " + std::string(m_conn->errstr) + "(" + std::to_string(m_conn->err) + ")");
 }
 
 redisContext *RedisContext::getContext() const
@@ -888,6 +755,34 @@ DBConnector::DBConnector(const string& dbName, unsigned int timeout_ms, bool isT
     // Empty constructor
 }
 
+DBConnector::DBConnector(const string& dbName, unsigned int timeout_ms, bool isTcpConn,
+                         const string& netns, bool authenticate)
+    : DBConnector(dbName, timeout_ms, isTcpConn, SonicDBKey(netns), authenticate)
+{
+}
+
+DBConnector::DBConnector(const string& dbName, unsigned int timeout_ms, bool isTcpConn,
+                         const SonicDBKey& key, bool authenticate)
+    : m_dbId(SonicDBConfig::getDbId(dbName, key)), m_dbName(dbName), m_key(key)
+{
+    if (authenticate && isTcpConn)
+        throw RedisAuthenticationError("Redis writer authentication requires an explicit Unix socket");
+    const timeval timeout = ms_to_timeval(timeout_ms);
+    const timeval *limit = timeout_ms ? &timeout : nullptr;
+    if (isTcpConn)
+        initContext(SonicDBConfig::getDbHostname(dbName, key).c_str(), SonicDBConfig::getDbPort(dbName, key), limit);
+    else
+        initContext(SonicDBConfig::getDbSock(dbName, key).c_str(), limit);
+    if (authenticate) authenticateConnection(limit);
+    select(this);
+}
+
+DBConnector::DBConnector(const DBConnector& other, unsigned int timeout_ms)
+    : RedisContext(other, timeout_ms), m_dbId(other.m_dbId), m_dbName(other.m_dbName), m_key(other.m_key)
+{
+    select(this);
+}
+
 int DBConnector::getDbId() const
 {
     return m_dbId;
@@ -920,6 +815,7 @@ SonicDBKey DBConnector::getDBKey() const
 
 DBConnector *DBConnector::newConnector(unsigned int timeout) const
 {
+    if (authenticationEnabled()) return new DBConnector(*this, timeout);
     DBConnector *ret;
 
     if (getContext()->connection_type == REDIS_CONN_TCP)
