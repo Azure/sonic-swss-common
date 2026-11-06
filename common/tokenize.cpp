@@ -6,12 +6,32 @@ namespace swss {
 
 vector<string> tokenize(const string &str, const char token)
 {
-    string tmp;
     vector<string> ret;
-    istringstream iss(str);
 
-    while (getline(iss, tmp, token))
-        ret.push_back(tmp);
+    if (str.empty())
+    {
+        return ret;
+    }
+
+    ret.reserve(4);
+
+    size_t start = 0;
+    while (true)
+    {
+        size_t pos = str.find(token, start);
+        if (pos == string::npos)
+        {
+            break;
+        }
+
+        ret.push_back(str.substr(start, pos - start));
+        start = pos + 1;
+    }
+
+    if (start < str.size())
+    {
+        ret.push_back(str.substr(start));
+    }
 
     return ret;
 }

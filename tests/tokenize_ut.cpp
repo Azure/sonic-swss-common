@@ -28,6 +28,20 @@ TEST(TOKENIZE, basic)
     EXPECT_EQ(origin, result);
 }
 
+TEST(TOKENIZE, edge_cases)
+{
+    EXPECT_EQ(tokenize("", ','), vector<string>({}));
+    EXPECT_EQ(tokenize("a", ','), vector<string>({"a"}));
+    EXPECT_EQ(tokenize("a,b", ','), vector<string>({"a", "b"}));
+    EXPECT_EQ(tokenize("a,b,", ','), vector<string>({"a", "b"}));
+    EXPECT_EQ(tokenize(",a", ','), vector<string>({"", "a"}));
+    EXPECT_EQ(tokenize("a,,b", ','), vector<string>({"a", "", "b"}));
+    EXPECT_EQ(tokenize(",", ','), vector<string>({""}));
+    EXPECT_EQ(tokenize(",,", ','), vector<string>({"", ""}));
+    EXPECT_EQ(tokenize("10.0.0.1,10.0.0.2", ','), vector<string>({"10.0.0.1", "10.0.0.2"}));
+    EXPECT_EQ(tokenize("Ethernet0,Ethernet4", ','), vector<string>({"Ethernet0", "Ethernet4"}));
+}
+
 TEST(TOKENIZE, IP)
 {
     IpAddresses origin("192.168.0.1,192.168.0.2");
