@@ -59,6 +59,7 @@ stages:
   - template: .azure-pipelines/build-template.yml
     parameters:
       arch: amd64
+      pool: sonicso1ES-amd64
       artifact_name: sonic-swss-common-${{ parameters.debian_version }}
       run_unit_test: true
       archive_gcov: true
