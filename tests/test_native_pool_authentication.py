@@ -53,25 +53,32 @@ def test_pool_authentication_timeout(protected):
     listener = socket.socket(socket.AF_UNIX)
     listener.bind(path)
     listener.listen(1)
+    listener.settimeout(1)
     stop, received = threading.Event(), []
     def server():
-        connection, _ = listener.accept()
-        with connection:
-            received.append(connection.recv(1024))
-            stop.wait(3)
-    thread = threading.Thread(target=server)
-    thread.start()
-    data = json.loads(protected['policy'].read_text())
-    data['unix_socket'] = path
-    protected['policy'].write_text(json.dumps(data))
+        try:
+            connection, _ = listener.accept()
+            with connection:
+                connection.settimeout(1)
+                received.append(connection.recv(1024))
+                stop.wait(3)
+        except socket.timeout:
+            # The client may fail before connecting or sending AUTH.
+            pass
+    thread = threading.Thread(target=server, daemon=True)
     try:
+        data = json.loads(protected['policy'].read_text())
+        data['unix_socket'] = path
+        protected['policy'].write_text(json.dumps(data))
+        thread.start()
         client = redis.Redis(connection_pool=connection_pool(unix_socket_path=path,
             authenticate=True, socket_connect_timeout=0.1, socket_timeout=1))
         with pytest.raises(redis.TimeoutError):
             client.ping()
     finally:
         stop.set()
-        thread.join(timeout=4)
+        if thread.ident is not None:
+            thread.join(timeout=4)
         listener.close()
     assert received and b'AUTH' in received[0]
 
