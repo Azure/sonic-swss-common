@@ -23,4 +23,4 @@ include tests/Makefile.am
 
 ACLOCAL_AMFLAGS = -I m4
 
-EXTRA_DIST += go.mod goext/redisconn/dial.go goext/redisconn/dial_test.go
+EXTRA_DIST = go.mod goext/redisconn/dial.go goext/redisconn/dial_test.go
