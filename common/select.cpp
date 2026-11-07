@@ -15,6 +15,16 @@ using namespace std;
 
 namespace swss {
 
+namespace {
+
+constexpr unsigned int kMaxConsecutiveErrorLogs = 10;
+
+// Thread-local rather than a member so as not to break the ABI
+thread_local unsigned int s_consecutiveErrors = 0;
+thread_local int s_lastFailedFd = -1;
+
+}
+
 Select::Select()
 {
     m_epoll_fd = ::epoll_create1(0);
@@ -128,11 +138,28 @@ int Select::poll_descriptors(Selectable **c, unsigned int timeout, bool interrup
         }
         catch (const std::runtime_error& ex)
         {
-            SWSS_LOG_ERROR("readData error: %s", ex.what());
+            // Only the first failing fd in the batch reaches here, and level-triggered epoll
+            // keeps its position stable, so a persistent outage saturates rather than resets.
+            if (fd != s_lastFailedFd)
+            {
+                s_lastFailedFd = fd;
+                s_consecutiveErrors = 0;
+            }
+
+            if (s_consecutiveErrors < kMaxConsecutiveErrorLogs)
+            {
+                s_consecutiveErrors++;
+                SWSS_LOG_ERROR("readData error: %s%s", ex.what(),
+                    s_consecutiveErrors == kMaxConsecutiveErrorLogs
+                        ? " (suppressing further logging until a successful read)" : "");
+            }
+
             return Select::ERROR;
         }
         m_ready.insert(sel);
     }
+
+    s_consecutiveErrors = 0;
 
     while (!m_ready.empty())
     {

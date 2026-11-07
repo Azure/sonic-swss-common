@@ -7,7 +7,11 @@
 #include "common/subscriberstatetable.h"
 #include "common/netmsg.h"
 #include "common/netlink.h"
+#include "common/logger.h"
 #include "gtest/gtest.h"
+
+#include <stdexcept>
+#include <string>
 
 
 using namespace std;
@@ -246,4 +250,147 @@ TEST(Priority, priority_select_6)
     EXPECT_EQ(ret, Select::OBJECT);
     // we gave fair scheduler. we've read different selectables on the second read
     EXPECT_NE(selectcs1, selectcs2);
+}
+
+namespace {
+
+// Mirrors kMaxConsecutiveErrorLogs in common/select.cpp.
+constexpr size_t kMaxErrorLogs = 10;
+
+// Throws on every read while failing, standing in for a selectable backed by an
+// unreachable redis.
+class FailingSelectable : public SelectableEvent
+{
+public:
+    FailingSelectable() { notify(); }
+
+    uint64_t readData() override
+    {
+        if (m_failing) throw runtime_error("Unable to read redis reply");
+        return SelectableEvent::readData();
+    }
+
+    void setFailing(bool failing) { m_failing = failing; }
+
+private:
+    bool m_failing = true;
+};
+
+// Stays readable forever, standing in for a healthy selectable that keeps
+// producing data while another one is broken.
+class HealthySelectable : public SelectableEvent
+{
+public:
+    HealthySelectable() { notify(); }
+
+    uint64_t readData() override
+    {
+        uint64_t ret = SelectableEvent::readData();
+        notify();
+        return ret;
+    }
+};
+
+class SelectErrorLogging : public ::testing::Test
+{
+protected:
+    Select s;
+
+    // Log suppression state is per-thread, so it outlives an individual test and
+    // only a successful read re-arms it. Tests read cleanly before asserting.
+    void readCleanly()
+    {
+        Selectable *sel = nullptr;
+        ASSERT_EQ(s.select(&sel, 0), Select::OBJECT);
+    }
+
+    // Poll n times, returning how many readData error lines were logged.
+    size_t pollAndCountLogs(int n)
+    {
+        Logger::swssOutputNotify("", "STDERR");
+        testing::internal::CaptureStderr();
+
+        for (int i = 0; i < n; i++)
+        {
+            Selectable *sel = nullptr;
+            s.select(&sel, 0);
+        }
+
+        string out = testing::internal::GetCapturedStderr();
+        Logger::swssOutputNotify("", "SYSLOG");
+
+        size_t logs = 0;
+        for (size_t p = out.find("readData error"); p != string::npos;
+             p = out.find("readData error", p + 1))
+        {
+            logs++;
+        }
+        return logs;
+    }
+};
+
+}
+
+// A healthy selectable read in the same poll must not re-arm logging for one that
+// keeps failing. It is added first so epoll tends to read it before the failing one.
+TEST_F(SelectErrorLogging, capped_alongside_a_healthy_selectable)
+{
+    HealthySelectable good;
+    FailingSelectable bad;
+    s.addSelectable(&good);
+    s.addSelectable(&bad);
+
+    bad.setFailing(false);
+    readCleanly();
+
+    bad.setFailing(true);
+    bad.notify();
+    EXPECT_EQ(pollAndCountLogs(1000), kMaxErrorLogs);
+}
+
+// A tight caller loop against a permanently failing selectable logs a bounded
+// number of lines instead of filling /var/log, and a later successful read re-arms
+// logging so a subsequent outage is still reported.
+TEST_F(SelectErrorLogging, capped_then_rearmed_by_a_successful_read)
+{
+    FailingSelectable bad;
+    s.addSelectable(&bad);
+
+    bad.setFailing(false);
+    readCleanly();
+
+    bad.setFailing(true);
+    bad.notify();
+    EXPECT_EQ(pollAndCountLogs(100), kMaxErrorLogs);
+
+    bad.setFailing(false);
+    readCleanly();
+
+    bad.setFailing(true);
+    bad.notify();
+    EXPECT_EQ(pollAndCountLogs(100), kMaxErrorLogs);
+}
+
+// A different fd failing gets its own log budget instead of inheriting the
+// saturated counter from the fd that was already failing.
+TEST_F(SelectErrorLogging, resets_for_a_different_fd)
+{
+    FailingSelectable first;
+    FailingSelectable second;
+    s.addSelectable(&first);
+    s.addSelectable(&second);
+
+    first.setFailing(false);
+    second.setFailing(false);
+    readCleanly();
+
+    first.setFailing(true);
+    first.notify();
+    EXPECT_EQ(pollAndCountLogs(100), kMaxErrorLogs);
+
+    first.setFailing(false);
+    second.setFailing(true);
+    first.notify();
+    second.notify();
+    EXPECT_EQ(pollAndCountLogs(100), kMaxErrorLogs);
 }
