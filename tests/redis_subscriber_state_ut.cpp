@@ -8,6 +8,8 @@
 #include "common/selectableevent.h"
 #include "common/table.h"
 #include "common/subscriberstatetable.h"
+#include "common/publishereventtable.h"
+#include "common/subscribereventtable.h"
 
 using namespace std;
 using namespace swss;
@@ -207,6 +209,86 @@ TEST(SubscriberStateTable, set)
         EXPECT_EQ(kfvOp(kco), "SET");
 
         auto fvs = kfvFieldsValues(kco);
+        EXPECT_EQ(fvs.size(), (unsigned int)(maxNumOfFields));
+
+        map<string, string> mm;
+        for (auto fv: fvs)
+        {
+            mm[fvField(fv)] = fvValue(fv);
+        }
+
+        for (int j = 0; j < maxNumOfFields; j++)
+        {
+            EXPECT_EQ(mm[field(index, j)], value(index, j));
+        }
+    }
+}
+
+TEST(SubscribeEventTable, set)
+{
+    clearDB();
+
+    // Test for event_tables
+    set<string> eventTables = SonicDBConfig::getEventTables("CONFIG_DB");
+    EXPECT_EQ(eventTables.size(), 1);
+    // for (auto &table: eventTables)
+    // {
+    //     cout << "Event table: " << table << endl;
+    // }
+
+    /* Prepare producer */
+    int index = 0;
+    DBConnector db("TEST_DB", 0, true);
+    PublisherEventTable p(&db, testTableName);
+    string key = "TheKey";
+    int maxNumOfFields = 2;
+
+    /* Set operation before any subscriber is created */
+    {
+        vector<FieldValueTuple> fields;
+        FieldValueTuple t("before_subscriber", "long_ago");
+        fields.push_back(t);
+        p.set(key, fields);
+    }
+
+    /* Prepare subscriber */
+    SubscriberEventTable c(&db, testTableName);
+    Select cs;
+    Selectable *selectcs;
+    cs.addSelectable(&c);
+
+    /* Set operation */
+    {
+        vector<FieldValueTuple> fields;
+        for (int j = 0; j < maxNumOfFields; j++)
+        {
+            FieldValueTuple t(field(index, j), value(index, j));
+            fields.push_back(t);
+        }
+        p.set(key, fields);
+    }
+
+    /* Pop operation */
+    {
+        int ret = cs.select(&selectcs);
+        EXPECT_EQ(ret, Select::OBJECT);
+        KeyOpFieldsValuesTuple kco;
+        c.pop(kco);
+        EXPECT_EQ(kfvKey(kco), key);
+        EXPECT_EQ(kfvOp(kco), "SET");
+
+        auto fvs = kfvFieldsValues(kco);
+        EXPECT_EQ(fvs.size(), 1);
+        EXPECT_EQ(fvs[0].first, "before_subscriber");
+        EXPECT_EQ(fvs[0].second, "long_ago");
+
+        ret = cs.select(&selectcs);
+        EXPECT_EQ(ret, Select::OBJECT);
+        c.pop(kco);
+        EXPECT_EQ(kfvKey(kco), key);
+        EXPECT_EQ(kfvOp(kco), "SET");
+
+        fvs = kfvFieldsValues(kco);
         EXPECT_EQ(fvs.size(), (unsigned int)(maxNumOfFields));
 
         map<string, string> mm;

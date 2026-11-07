@@ -84,10 +84,12 @@ common_libswsscommon_la_SOURCES = \
     common/notificationproducer.cpp  \
     common/linkcache.cpp             \
     common/portmap.cpp               \
+    common/publishereventtable.cpp     \
     common/pubsub.cpp                \
     common/tokenize.cpp              \
     common/exec.cpp                  \
     common/saiaclschema.cpp          \
+    common/subscribereventtable.cpp  \
     common/subscriberstatetable.cpp  \
     common/timestamp.cpp             \
     common/warm_restart.cpp          \

@@ -2,8 +2,10 @@
 
 #include <string>
 #include <map>
+#include <memory>
 #include "sonicv2connector.h"
 #include "redistran.h"
+#include "table.h"
 
 namespace swss {
 
@@ -31,8 +33,11 @@ public:
     std::string getDbName() const;
 
 protected:
+    std::shared_ptr<swss::Table> getTableWriter(const std::string &table_name);
+
     std::string m_table_name_separator = "|";
     std::string m_key_separator = "|";
+    std::set<std::string> m_event_tables;
 
     std::string m_db_name;
 };

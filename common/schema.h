@@ -567,6 +567,7 @@ after libswsscommon deb make.
 #define SET_COMMAND "SET"
 #define HSET_COMMAND "HSET"
 #define DEL_COMMAND "DEL"
+#define HDEL_COMMAND "HDEL"
 #define EMPTY_PREFIX ""
 
 #define APP_FABRIC_MONITOR_DATA_TABLE_NAME	"FABRIC_MONITOR_TABLE"

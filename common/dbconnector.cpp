@@ -45,27 +45,42 @@ void SonicDBConfig::parseDatabaseConfig(const string &file,
             i >> j;
             for (auto it = j["INSTANCES"].begin(); it!= j["INSTANCES"].end(); it++)
             {
-               string instName = it.key();
-               string socket;
-               auto path = it.value().find("unix_socket_path");
-               if (path != it.value().end())
-               {
+                string instName = it.key();
+                string socket;
+                auto path = it.value().find("unix_socket_path");
+                if (path != it.value().end())
+                {
                     socket = *path;
-               }
-               string hostname = it.value().at("hostname");
-               int port = it.value().at("port");
-               inst_entry[instName] = {socket, hostname, port};
+                }
+                string hostname = it.value().at("hostname");
+                int port = it.value().at("port");
+                inst_entry[instName] = {socket, hostname, port};
             }
 
             for (auto it = j["DATABASES"].begin(); it!= j["DATABASES"].end(); it++)
             {
-               string dbName = it.key();
-               string instName = it.value().at("instance");
-               int dbId = it.value().at("id");
-               string separator = it.value().at("separator");
-               db_entry[dbName] = {instName, dbId, separator};
+                string dbName = it.key();
+                string instName = it.value().at("instance");
+                int dbId = it.value().at("id");
+                string separator = it.value().at("separator");
 
-               separator_entry.emplace(dbId, separator);
+                set<string> eventTables;
+                auto path = it.value().find("event_tables");
+                if (path != it.value().end())
+                {
+                    for (auto& eventTable: it.value()["event_tables"])
+                    {
+                        eventTables.emplace(eventTable);
+                        // printf("Event table: %s %s\n", dbName.c_str(), eventTable.get<string>().c_str());
+                    }
+                }
+                else
+                {
+                    // printf("Warning: event_tables not found for database %s, using empty set\n", dbName.c_str());
+                }
+                db_entry[dbName] = {instName, dbId, separator, eventTables};
+
+                separator_entry.emplace(dbId, separator);
             }
         }
 
@@ -197,8 +212,11 @@ void SonicDBConfig::initialize(const string &file)
 
     SonicDBKey empty_key;
     parseDatabaseConfig(file, inst_entry, db_entry, separator_entry);
+    // printf("SonicDBConfig::initialize: parsed %zu Redis instances, %zu databases, %zu separators, %lu\n",
+           // inst_entry.size(), db_entry.size(), separator_entry.size(), db_entry["CONFIG_DB"].eventTables.size());
     m_inst_info.emplace(empty_key, std::move(inst_entry));
     m_db_info.emplace(empty_key, std::move(db_entry));
+    // printf("m_db_info %lu\n", m_db_info[empty_key]["CONFIG_DB"].eventTables.size());
     m_db_separator.emplace(empty_key, std::move(separator_entry));
 
     // Set it as the config file is already parsed and init done.
@@ -408,6 +426,41 @@ string SonicDBConfig::getSeparator(const DBConnector* db)
     {
         return getSeparator(dbName, key);
     }
+}
+
+set<string> SonicDBConfig::getEventTables(const string &dbName, const string &netns, const std::string &containerName)
+{
+    SonicDBKey key;
+    // printf("SonicDBConfig::getEventTables: dbName=%s, netns=%s, containerName=%s, %lu\n",
+    //        dbName.c_str(), netns.c_str(), containerName.c_str(), m_db_info[key][dbName].eventTables.size());
+    key.netns = netns;
+    key.containerName = containerName;
+    // printf("SonicDBConfig::getEventTables: dbName=%s, netns=%s, containerName=%s, %lu\n",
+    //        dbName.c_str(), netns.c_str(), containerName.c_str(), m_db_info[key][dbName].eventTables.size());
+    auto ret = getEventTables(dbName, key);
+    // printf("SonicDBConfig::getEventTables: %lu\n", ret.size());
+    return ret;
+}
+
+set<string> SonicDBConfig::getEventTables(const string &dbName, const SonicDBKey &key)
+{
+    std::lock_guard<std::recursive_mutex> guard(m_db_info_mutex);
+
+    if (!m_init)
+        initialize(DEFAULT_SONIC_DB_CONFIG_FILE);
+
+    if (!key.isEmpty())
+    {
+        if (!m_global_init)
+        {
+            SWSS_LOG_THROW("Initialize global DB config using API SonicDBConfig::initializeGlobalConfig");
+        }
+    }
+    // printf("SonicDBConfig::getEventTables2: dbName=%s, %lu\n",
+    //        dbName.c_str(), m_db_info[key][dbName].eventTables.size());
+    auto ret = getDbInfo(dbName, key).eventTables;
+    // printf("SonicDBConfig::getEventTables2: %lu\n", ret.size());
+    return ret;
 }
 
 string SonicDBConfig::getDbSock(const string &dbName, const string &netns, const std::string &containerName)

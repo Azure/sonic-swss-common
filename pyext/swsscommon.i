@@ -32,11 +32,13 @@
 #include "redisselect.h"
 #include "redistran.h"
 #include "producerstatetable.h"
+#include "publishereventtable.h"
 #include "consumertablebase.h"
 #include "consumerstatetable.h"
 #include "producertable.h"
 #include "profileprovider.h"
 #include "consumertable.h"
+#include "subscribereventtable.h"
 #include "subscriberstatetable.h"
 #ifdef ENABLE_YANG_MODULES
 #include "cfg_schema.h"
@@ -327,6 +329,7 @@ std::vector<std::pair<std::string, std::vector<swss::FieldValueTuple>>> zmqWait(
 %apply std::vector<std::pair<std::string, std::string>>& OUTPUT {std::vector<std::pair<std::string, std::string>> &ovalues};
 %apply std::string& OUTPUT {std::string &value};
 %include "table.h"
+%include "publishereventtable.h"
 #ifdef ENABLE_YANG_MODULES
 %include "decoratortable.h"
 #endif
@@ -420,6 +423,7 @@ static inline void zmqProducerBatchedSend(swss::ZmqProducerStateTable &p,
 
 %include "consumertable.h"
 %include "consumerstatetable.h"
+%include "subscribereventtable.h"
 %include "subscriberstatetable.h"
 #ifdef ENABLE_YANG_MODULES
 %include "decoratorsubscriberstatetable.h"
