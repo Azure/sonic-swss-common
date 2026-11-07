@@ -27,7 +27,8 @@ class TestGenCfgSchema(unittest.TestCase):
         mock_sy.confDbYangMap = {
             'VLAN': {'container': {}},
             'PORT': {'container': {}},
-            'memory-usage': {'container': {}}
+            'memory-usage': {'container': {}},
+            'TEAMD': {'container': {}}
         }
         
         # Run the script with test arguments
@@ -43,6 +44,10 @@ class TestGenCfgSchema(unittest.TestCase):
             # Check for expected defines
             self.assertIn('#define CFG_VLAN_TABLE_NAME "VLAN"', content)
             self.assertIn('#define CFG_PORT_TABLE_NAME "PORT"', content)
+            self.assertIn('#define CFG_TEAMD_TABLE_NAME "TEAMD"', content)
+            self.assertIn(
+                '#define CFG_TEAMD_MODE_TABLE_NAME CFG_TEAMD_TABLE_NAME',
+                content)
             # Check that memory-usage is commented out due to hyphen
             self.assertIn('// #define CFG_memory-usage_TABLE_NAME "memory-usage"', content)
 

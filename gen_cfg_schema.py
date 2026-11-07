@@ -4,6 +4,12 @@ import sonic_yang
 YANG_MODELS_DIR = "/usr/local/yang-models"
 DEFAULT_OUTPUT_FILE = "common/cfg_schema.h"
 
+# Compat aliases for legacy table names that map to unified config tables.
+# Each alias expands to the primary table macro, not a separate table.
+TABLE_ALIASES = {
+    "TEAMD": ["TEAMD_MODE"],
+}
+
 def write_cfg_schema(keys, output_file="cfg_schema.h"):
     header = """#ifndef CFG_SCHEMA_H
 #define CFG_SCHEMA_H
@@ -28,6 +34,11 @@ namespace swss {
                 f.write('// #define CFG_{}_TABLE_NAME "{}"\n'.format(key, key))
             else:
                 f.write('#define CFG_{}_TABLE_NAME "{}"\n'.format(key, key))
+                for alias in TABLE_ALIASES.get(key, []):
+                    f.write(
+                        '#define CFG_{}_TABLE_NAME CFG_{}_TABLE_NAME\n'
+                        .format(alias, key)
+                    )
         f.write(footer)
 
 def main():
