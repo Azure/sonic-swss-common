@@ -36,6 +36,16 @@ public:
     void connect(int dbId, const std::string& dbName, bool retry = true);
     // Named DB metadata; set_redis_kwargs selects Unix or TCP transport.
     void connect(const std::string& dbName, const SonicDBKey& key, bool retry = true, bool authenticate = false);
+#if defined(SWIG) && defined(SWIGPYTHON)
+%pythoncode %{
+    # Preserve the original keyword arguments when dispatching C++ overloads.
+    def connect(self, dbId, dbName, retry=True, authenticate=None):
+        args = (dbId, dbName, retry)
+        if authenticate is not None:
+            args += (authenticate,)
+        return _swsscommon.DBInterface_connect(self, *args)
+%}
+#endif
     void close(const std::string& dbName);
     void close();
     int64_t del(const std::string& dbName, const std::string& key, bool blocking = false);

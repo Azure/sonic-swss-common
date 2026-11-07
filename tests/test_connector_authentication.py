@@ -43,6 +43,16 @@ def test_dbinterface_explicit_connection(protected, authenticate):
     interface.close()
 
 
+def test_dbinterface_preserves_legacy_keyword_arguments(protected):
+    interface = swss.DBInterface()
+    interface.set_redis_kwargs(protected["socket"], "", 0)
+    interface.connect(dbId=6, dbName="STATE_DB", retry=False)
+    assert interface.get_redis_client("STATE_DB").getDbId() == 6
+    interface.close()
+    interface.connect("STATE_DB", swss.SonicDBKey(), retry=False, authenticate=True)
+    interface.get_redis_client("STATE_DB").set("keyword-interface", "allowed")
+
+
 def test_dbinterface_requires_close_before_changing_authentication(protected):
     interface = swss.DBInterface()
     interface.set_redis_kwargs(protected["socket"], "", 0)
