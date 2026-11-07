@@ -44,9 +44,39 @@ AC_ARG_ENABLE(yangmodules,
 	no)  yangmodules=false ;;
 	*) AC_MSG_ERROR(bad value ${enableval} for --enable-yangmodules) ;;
 esac],[yangmodules=true])
+AC_ARG_ENABLE(otlp,
+[  --enable-otlp          Build the OTLP sink (requires opentelemetry-cpp)],
+[case "${enableval}" in
+	yes) otlp=true ;;
+	no)  otlp=false ;;
+	*) AC_MSG_ERROR(bad value ${enableval} for --enable-otlp) ;;
+esac],[otlp=false])
 AM_CONDITIONAL(DEBUG, test x$debug = xtrue)
 AM_CONDITIONAL(PYTHON2, test x$python2 = xtrue)
 AM_CONDITIONAL(YANGMODS, test x$yangmodules = xtrue)
+AM_CONDITIONAL(OTLP, test x$otlp = xtrue)
+
+if test x$otlp = xtrue; then
+	PKG_CHECK_MODULES([OPENTELEMETRY],
+		[opentelemetry_api opentelemetry_sdk opentelemetry_exporter_otlp_grpc],
+		[have_otlp_pkgconfig=yes],
+		[have_otlp_pkgconfig=no])
+	if test x$have_otlp_pkgconfig = xno; then
+		# opentelemetry-cpp does not ship pkg-config files in all distributions.
+		# Fall back to header + library probes so the build still succeeds when
+		# the SDK is installed under a standard prefix.
+		AC_LANG_PUSH([C++])
+		AC_CHECK_HEADER([opentelemetry/version.h], [],
+			[AC_MSG_ERROR([--enable-otlp requested but opentelemetry-cpp headers were not found. Install opentelemetry-cpp or pass CPPFLAGS=-I<prefix>/include.])])
+		AC_LANG_POP([C++])
+		OPENTELEMETRY_CFLAGS=""
+		OPENTELEMETRY_LIBS="-lopentelemetry_exporter_otlp_grpc -lopentelemetry_otlp_recordable -lopentelemetry_proto -lopentelemetry_resources -lopentelemetry_trace -lopentelemetry_metrics -lopentelemetry_common -lgrpc++ -lgrpc -lprotobuf"
+	fi
+	AC_DEFINE([HAVE_OTLP], [1], [Define to 1 if the OTLP sink is built])
+fi
+AC_SUBST([OPENTELEMETRY_CFLAGS])
+AC_SUBST([OPENTELEMETRY_LIBS])
+
 if test x$CONFIGURED_ARCH = xarmhf && test x$CROSS_BUILD_ENVIRON = xy; then
 	AM_CONDITIONAL(ARCH64, false)
 else
