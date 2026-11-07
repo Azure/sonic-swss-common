@@ -9,11 +9,13 @@
 
 namespace swss {
 
+using SelectableTimeType = std::chrono::time_point<std::chrono::steady_clock>;
+
 class Selectable
 {
 public:
     Selectable(int pri = 0) : m_priority(pri),
-                              m_last_used_time(std::chrono::steady_clock::now()) {}
+                              m_earliest_event_time(std::chrono::steady_clock::now()) {}
 
     virtual ~Selectable() = default;
 
@@ -62,22 +64,32 @@ private:
 
     friend class Select;
 
-    // only Select class can access and update m_last_used_time
+    // only Select class can access and update m_earliest_event_time
 
-    std::chrono::time_point<std::chrono::steady_clock> getLastUsedTime() const
+
+    std::chrono::time_point<std::chrono::steady_clock> getEarliestEventTime() const
     {
-        return m_last_used_time;
+        return m_earliest_event_time;
     }
 
-    void updateLastUsedTime()
+    void updateEarliestEventTime()
     {
-        m_last_used_time = std::chrono::steady_clock::now();
+        if (m_earliest_event_time != SelectableTimeType::max())
+        {
+            return;
+        }
+
+        m_earliest_event_time = std::chrono::steady_clock::now();
     }
 
+    void resetEarliestEventTime()
+    {
+        m_earliest_event_time = SelectableTimeType::max();
+    }
 
     int m_priority; // defines priority of Selectable inside Select
                     // higher value is higher priority
-    std::chrono::time_point<std::chrono::steady_clock> m_last_used_time;
+    SelectableTimeType m_earliest_event_time;
 };
 
 }

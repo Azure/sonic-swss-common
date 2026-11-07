@@ -55,14 +55,15 @@ private:
                 return false;
 
             /* if the priorities are equal */
-            /* use Selectable which was selected earlier */
-            if (a->getLastUsedTime() < b->getLastUsedTime())
+            /* use Selectable which was select earlier */
+            if (a->getEarliestEventTime() < b->getEarliestEventTime())
                 return true;
-            else if (a->getLastUsedTime() > b->getLastUsedTime())
+            else if (a->getEarliestEventTime() > b->getEarliestEventTime())
                 return false;
 
-            /* when a == b */
-            return false;
+            // https://en.cppreference.com/w/cpp/container/set
+            // two objects a and b are considered equivalent if neither compares less than the other: !comp(a, b) && !comp(b, a).
+            return (a != b);
         }
     };
 
