@@ -16,11 +16,28 @@ static event_service service_cl, service_svr;
 static int server_rd_code, server_ret;
 static event_serialized_lst_t server_rd_lst, server_wr_lst;
 
+const char *test_cfg_data_localhost = "{\
+\"events\" : {  \
+    \"xsub_path\": \"127.0.0.1:5570\", \
+    \"req_rep_path\": \"127.0.0.1:5572\" \
+    }\
+}";
+
+
 /* Mimic the eventd service that handles service requests via dedicated thread */
 void serve_commands()
 {
     int code;
     event_serialized_lst_t lst, opt_lst;
+
+    ofstream tfile;
+    const char *tfile_name = "/tmp/init_cfg.json";
+    tfile.open (tfile_name);
+    tfile << test_cfg_data_localhost << "\n";
+    tfile.close();
+
+    read_init_config(tfile_name);
+
     EXPECT_EQ(0, service_svr.init_server(zmq_ctx, 1000));
     while(!do_terminate) {
         if (0 != service_svr.channel_read(code, lst)) {
@@ -69,6 +86,7 @@ void serve_commands()
         EXPECT_EQ(0, service_svr.channel_write(server_ret, server_wr_lst));
     }
     service_svr.close_service();
+    read_init_config(NULL);
     EXPECT_FALSE(service_svr.is_active());
 }
 
