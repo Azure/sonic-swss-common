@@ -1,0 +1,13 @@
+syntax = "proto3";
+package contacts;
+
+message FieldsValues {
+  string field = 1;
+  string value = 2;
+}
+
+message KeyOpFieldsValues {
+  string key = 1;
+  string op = 2;
+  repeated FieldsValues fvs = 3;
+}
