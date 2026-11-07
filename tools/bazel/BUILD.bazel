@@ -1,0 +1,34 @@
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+
+package(default_visibility = ["//visibility:public"])
+
+# Toggle for YANG-driven generation of cfg_schema.h, mirroring configure.ac's
+# --enable/--disable-yangmodules. Defaults on, matching the production deb build
+# (rules/swss-common.mk builds libswsscommon without the noyangmod profile).
+bool_flag(
+    name = "yang_modules",
+    build_setting_default = True,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "yang_modules_enabled",
+    flag_values = {":yang_modules": "True"},
+)
+
+config_setting(
+    name = "yang_modules_disabled",
+    flag_values = {":yang_modules": "False"},
+)
+
+# The cfg_schema.h to build against.
+#
+# Defaults to //common:cfg_schema_stuf, which will only build when YANG modules are disabled.
+# However, this flag allows passing a precompiled cfg_schema header from the Make side,
+# which p4rt needs to preserve behaviour.
+#
+# TODO(bazel-ready): Remove once we can generate cfg_schema directly in the bazel build.
+label_flag(
+    name = "cfg_schema",
+    build_setting_default = "//common:cfg_schema_stub",
+)

@@ -1,0 +1,13 @@
+# Bazel 6 / WORKSPACE entry point.
+#
+# The root .bazelrc is for Bazel 8, and contains flags that Bazel 6 doesn't know.
+# Only the C++ library and its tests are supported here.
+#
+# //dist, //pyext and //goext need rules_distroless, rules_go and sonic-build-infra,
+# which don't work in the WORKSPACE context.
+
+common --noincompatible_disallow_empty_glob
+
+# YANG-driven generation of cfg_schema.h is not wired into the Bazel build yet,
+# and the default is deliberately incompatible so it fails loudly.
+common --//tools/bazel:yang_modules=False

@@ -1,0 +1,32 @@
+# buildifier lives in its own package so the root package does not have to
+# load @buildifier_prebuilt.
+# Otherwise everyone would have to depend on buildifier_prebuilt.
+load("@buildifier_prebuilt//:rules.bzl", "buildifier")
+
+BAZEL_6_INCOMPATIBLE_WARNINGS = [
+    "-canonical-repository",
+    "-native-cc-binary",
+    "-native-cc-import",
+    "-native-cc-library",
+    "-native-cc-test",
+]
+
+buildifier(
+    name = "buildifier",
+    exclude_patterns = [
+        "./.git/*",
+    ],
+    lint_mode = "fix",
+    lint_warnings = BAZEL_6_INCOMPATIBLE_WARNINGS,
+    mode = "fix",
+)
+
+buildifier(
+    name = "buildifier.check",
+    exclude_patterns = [
+        "./.git/*",
+    ],
+    lint_mode = "warn",
+    lint_warnings = BAZEL_6_INCOMPATIBLE_WARNINGS,
+    mode = "diff",
+)

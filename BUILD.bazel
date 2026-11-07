@@ -1,0 +1,174 @@
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+
+# TODO(bazel-ready): Restore when we only support Bazel 8+
+# load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+# load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("//tools/bazel:always_link_transition.bzl", "alwayslink_cc_binary")
+load("//tools/bazel:cc.bzl", "swss_cc_binary")
+load(
+    "//tools/bazel:deps.bzl",
+    "SWSS_COMMON_COPTS",
+    "SWSS_COMMON_DEPS",
+    "SWSS_COMMON_LINKOPTS",
+)
+load("//tools/bazel:flags.bzl", "CXXFLAGS_COMMON")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["LICENSE"])
+
+swss_common_hdrs = ["//common:hdrs"]
+
+filegroup(
+    name = "hdrs",
+    srcs = swss_common_hdrs,
+)
+
+# Necessary for when we import swss_common as a prebuilt .so file.
+# We want all the deps from swsscommon, but none of the symbols.
+# The symbols will come from the prebuilt .so file.
+# TODO Remove once the cc_shared_library version of swss_common works with rules_distroless.
+cc_library(
+    name = "common_deps",
+    linkopts = SWSS_COMMON_LINKOPTS,
+    deps = SWSS_COMMON_DEPS,
+)
+
+# Necessary for when we import swss_common as a dynamic .so file.
+# We don't want to include the whole archive when we want to override them with mocks.
+# TODO Remove once the cc_shared_library version of swss_common works with rules_distroless.
+bool_flag(
+    name = "alwayslink",
+    build_setting_default = False,
+)
+
+config_setting(
+    name = "alwayslink_false",
+    flag_values = {":alwayslink": "false"},
+)
+
+config_setting(
+    name = "alwayslink_true",
+    flag_values = {":alwayslink": "true"},
+)
+
+cc_library(
+    name = "common",
+    srcs = ["//common:srcs"],
+    hdrs = swss_common_hdrs,
+    copts = [
+        "-fPIC",
+        "-std=c++14",
+    ] + SWSS_COMMON_COPTS,
+    includes = [
+        "common",
+    ],
+    linkopts = SWSS_COMMON_LINKOPTS,
+    visibility = ["//visibility:public"],
+    deps = SWSS_COMMON_DEPS,
+    # Force all symbols to be included when linking into shared library
+    # This is required for the consolidated .so to export all symbols needed by SWIG bindings
+    # However, some builds like `sonic-swss` will refuse to link if they are always linked,
+    # because symbols in `libcommon.a` will conflict with test mocks. Hence, the select()
+    alwayslink = select({
+        ":alwayslink_true": True,
+        ":alwayslink_false": False,
+    }),
+)
+
+cc_library(
+    name = "libswsscommon",
+    hdrs = swss_common_hdrs,
+    include_prefix = "swss",
+    strip_include_prefix = "common",
+    deps = [":common"],
+)
+
+# Consolidated shared library for cgo to avoid argument list too long
+# The :common library has alwayslink=True to ensure all symbols are exported
+cc_binary(
+    name = "libswsscommon_consolidated_base",
+    linkopts = [
+        # Allow undefined symbols from external runtime deps (hiredis, zmq, etc.)
+        # These are resolved at runtime when the .so is loaded
+        "-Wl,--allow-shlib-undefined",
+        "-Wl,--undefined-version",
+        # Match the SONAME libtool derives for common/Makefile.am.
+        "-Wl,-soname,libswsscommon.so.0",
+    ],
+    linkshared = True,
+    deps = [":common"],
+)
+
+# If we're building the consolidated binary, we always want to link it.
+alwayslink_cc_binary(
+    name = "libswsscommon_consolidated.so",
+    binary = "libswsscommon_consolidated_base",
+)
+
+# libswsscommon as a shared library: the headers and the distro deps, with the
+# symbols coming from the prebuilt .so rather than from an archive. Linking this
+# gives a DT_NEEDED on libswsscommon.so.0, the way `-lswsscommon` does in Make.
+cc_import(
+    name = "libswsscommon_so",
+    shared_library = ":libswsscommon_consolidated.so",
+)
+
+cc_library(
+    name = "libswsscommon_shared",
+    hdrs = swss_common_hdrs,
+    include_prefix = "swss",
+    # Consumers include these headers unprefixed, the way :common exposes them.
+    includes = ["common"],
+    strip_include_prefix = "common",
+    deps = [
+        ":common_deps",
+        ":libswsscommon_so",
+    ],
+)
+
+# Alias for compatibility with existing references
+alias(
+    name = "swsscommon_base",
+    actual = ":common",
+)
+
+# Filegroups for swig bindings and other assets
+filegroup(
+    name = "all_hdrs",
+    srcs = swss_common_hdrs,
+)
+
+filegroup(
+    name = "swig_template",
+    srcs = ["//pyext:swsscommon.i"],
+)
+
+filegroup(
+    name = "all_luas",
+    srcs = ["//common:luas"],
+)
+
+# TODO(bazel-ready): CFLAGS_COMMON is not respected yet in many of these targets.
+
+swss_cc_binary(
+    name = "swssloglevel",
+    srcs = ["//common:loglevel_srcs"],
+    cxxopts = CXXFLAGS_COMMON,
+    linkopts = [
+        "-Wl,-z,now",
+    ],
+    linkstatic = True,
+    deps = ["libswsscommon"],
+)
+
+# Packaging lives in //dist, which is bzlmod-only, since it needs rules_distroless.
+alias(
+    name = "libswsscommon_pkg",
+    actual = "//dist:libswsscommon_pkg",
+)
+
+alias(
+    name = "sonic-db-cli_pkg",
+    actual = "//dist:sonic-db-cli_pkg",
+)

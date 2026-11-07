@@ -1,0 +1,16 @@
+common --check_direct_dependencies=off
+common --noincompatible_disallow_empty_glob
+
+# Try to read from sonic-bazel-registry first
+common --registry=https://raw.githubusercontent.com/sonic-net/sonic-bazel-registry/main
+# If a dependency is not found there, use the Bazel Central Registry
+common --registry=https://bcr.bazel.build/
+
+# Import the per-module override configs shared across sonic-buildimage submodules.
+try-import %workspace%/../../tools/bazel/submodule-config.bazelrc
+
+# Build all release binaries for `trixie`.
+# These are host toolchains (exec == target == $cpu),
+# so --config=aarch64 only resolves when Bazel itself is running on an aarch64 machine.
+common --platforms=@sonic_build_infra//platforms:x86_64_trixie
+common:aarch64 --platforms=@sonic_build_infra//platforms:aarch64_trixie

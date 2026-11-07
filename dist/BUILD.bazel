@@ -1,0 +1,88 @@
+load("@rules_distroless//distroless:defs.bzl", "flatten")
+load("@tar.bzl", "mtree_mutate", "mtree_spec", "tar")
+
+package(default_visibility = ["//visibility:public"])
+
+# libswsscommon deb-style distribution package
+# Matches debian/libswsscommon.install:
+#   usr/lib/*/lib*.so.*
+#   usr/share/swss/*.lua
+#   var/run/redis/sonic-db/database_config.json
+#   usr/bin/swssloglevel
+
+mtree_spec(
+    name = "dist_lua_mtree_base",
+    srcs = ["//:all_luas"],
+)
+
+mtree_mutate(
+    name = "dist_lua_mtree",
+    mtree = ":dist_lua_mtree_base",
+    package_dir = "usr/share/swss",
+    strip_prefix = "common",
+)
+
+tar(
+    name = "dist_lua",
+    srcs = ["//:all_luas"],
+    mtree = ":dist_lua_mtree",
+)
+
+# Loose files: shared library, config, and binaries.
+#
+# The library lands in a multiarch directory, and tar()'s mtree attribute must be a
+# literal list rather than a select(). So we declare one tar per architecture and
+# select between them in the :dist_loose alias below.
+DIST_LOOSE_SRCS = [
+    "//:libswsscommon_consolidated.so",
+    "//common:database_config.json",
+    "//:swssloglevel",
+]
+
+DIST_LOOSE_COMMON_MTREE = [
+    "var/run/redis/sonic-db/database_config.json type=file content=$(location //common:database_config.json)",
+    "usr/bin/swssloglevel type=file mode=0755 content=$(location //:swssloglevel)",
+]
+
+[
+    tar(
+        name = "dist_loose_" + cpu,
+        srcs = DIST_LOOSE_SRCS,
+        mtree = [
+            "usr/lib/{}/libswsscommon.so type=file content=$(location //:libswsscommon_consolidated.so)".format(multiarch),
+        ] + DIST_LOOSE_COMMON_MTREE,
+        target_compatible_with = ["@platforms//cpu:" + cpu],
+    )
+    for cpu, multiarch in [
+        ("x86_64", "x86_64-linux-gnu"),
+        ("arm64", "aarch64-linux-gnu"),
+    ]
+]
+
+alias(
+    name = "dist_loose",
+    actual = select({
+        "@platforms//cpu:x86_64": ":dist_loose_x86_64",
+        "@platforms//cpu:arm64": ":dist_loose_arm64",
+    }),
+)
+
+flatten(
+    name = "libswsscommon_pkg",
+    tars = [
+        ":dist_lua",
+        ":dist_loose",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+tar(
+    name = "sonic-db-cli_pkg",
+    srcs = [
+        "//sonic-db-cli",
+    ],
+    mtree = [
+        "usr/bin/sonic-db-cli type=file mode=0755 content=$(location //sonic-db-cli:sonic-db-cli)",
+    ],
+    visibility = ["//visibility:public"],
+)

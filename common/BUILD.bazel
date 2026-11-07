@@ -1,0 +1,104 @@
+package(default_visibility = ["//visibility:public"])
+
+# The minimal cfg_schema.h that `./configure --disable-yangmodules` produces.
+# The CFG_*_TABLE_NAME macros the library itself uses remain defined inline in schema.h.
+#
+# This is the default value for --//tools/bazel:cfg_schema.
+#
+# TODO(bazel-ready): Wire up YANG-driven generation (gen_cfg_schema.py) to Bazel.
+# it needs the YANG toolchain plus a python toolchain, which are not migrated yet.
+# Until then, mark this stub as incompatible with YANG modules enabled.
+genrule(
+    name = "cfg_schema_stub",
+    outs = ["cfg_schema_stub.h"],
+    cmd = """{
+echo '#ifndef CFG_SCHEMA_H'
+echo '#define CFG_SCHEMA_H'
+echo ''
+echo '// Minimal cfg_schema.h generated when YANG modules are disabled'
+echo '#ifdef __cplusplus'
+echo 'namespace swss {'
+echo '#endif'
+echo ''
+echo '#ifdef __cplusplus'
+echo '}'
+echo '#endif'
+echo '#endif'
+} > $@""",
+    target_compatible_with = select({
+        "//tools/bazel:yang_modules_enabled": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
+)
+
+# Genrule to import the value of --//tools/bazel:cfg_schema into the build.
+#
+# It lives in common/ to match common/Makefile.am (BUILT_SOURCES = common/cfg_schema.h).
+genrule(
+    name = "cfg_schema_h",
+    srcs = ["//tools/bazel:cfg_schema"],
+    outs = ["cfg_schema.h"],
+    cmd = "cp $< $@",
+)
+
+# Sources that need libyang, mirroring the YANGMODS conditional in common/Makefile.am.
+YANG_SRCS = [
+    "decoratorsubscriberstatetable.cpp",
+    "decoratortable.cpp",
+    "defaultvalueprovider.cpp",
+]
+
+# Library sources, excluding the standalone swssloglevel tool sources.
+#
+# c-api/ is listed separately because glob() does not recurse: "*.cpp" alone
+# silently drops the whole C API, which common/Makefile.am builds into the
+# library. Nothing fails at build time; the .so just ships without it.
+filegroup(
+    name = "srcs",
+    srcs = glob(
+        [
+            "*.cpp",
+            "c-api/*.cpp",
+        ],
+        exclude = [
+            "loglevel.cpp",
+            "loglevel_util.cpp",
+        ] + YANG_SRCS,
+    ) + select({
+        "//tools/bazel:yang_modules_enabled": YANG_SRCS,
+        "//conditions:default": [],
+    }),
+)
+
+# All library headers, including the generated cfg_schema.h.
+# c-api/ is spelled out for the same reason as in :srcs above. These install as
+# swss/c-api/*.h, matching the layout of the libswsscommon-dev deb.
+filegroup(
+    name = "hdrs",
+    srcs = glob(
+        [
+            "*.h",
+            "*.hpp",
+            "c-api/*.h",
+        ],
+        allow_empty = True,
+    ) + [":cfg_schema_h"],
+)
+
+# swssloglevel standalone tool sources.
+filegroup(
+    name = "loglevel_srcs",
+    srcs = [
+        "loglevel.cpp",
+        "loglevel.h",
+        "loglevel_util.cpp",
+    ],
+)
+
+# Redis Lua scripts shipped in the libswsscommon package.
+filegroup(
+    name = "luas",
+    srcs = glob(["*.lua"]),
+)
+
+exports_files(["database_config.json"])
