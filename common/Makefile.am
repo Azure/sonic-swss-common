@@ -100,6 +100,7 @@ common_libswsscommon_la_SOURCES = \
     common/zmqserver.cpp             \
     common/zmqrouteserver.cpp        \
     common/asyncdbupdater.cpp        \
+    common/componentstats.cpp        \
     common/redis_table_waiter.cpp    \
     common/interface.h               \
     common/vrf.h                     \
