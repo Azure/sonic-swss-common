@@ -281,7 +281,30 @@ func NewConfigDBConnector(a ...interface{}) *ConfigDBConnector {
         def __init__(self, config_db_connector):
             self.connector = config_db_connector
             self.default_value_provider = DefaultValueProvider()
-        # helper methods for append default values to result.
+        # helper methods for append profile and default values to result.
+        def _append_profile(self, result):
+            client = self.connector.get_redis_client(self.connector.db_name)
+            profile_config = ProfileProvider.instance().getConfigs(client)
+            for table_name in profile_config:
+                profile_table = profile_config[table_name]
+                if table_name not in result:
+                    result[table_name] = profile_table
+                else:
+                    config_table = result[table_name]
+                    for profile_key in profile_table:
+                        if profile_key not in config_table:
+                            config_table[profile_key] = profile_table[profile_key]
+        def _append_profile_table(self, table, result):
+            client = self.connector.get_redis_client(self.connector.db_name)
+            profile_keys = ProfileProvider.instance().getKeys(table, client)
+            for profile_key in profile_keys:
+                if profile_key not in result:
+                    serialized_key = self.connector.serialize_key(profile_key)
+                    result[profile_key] = ProfileProvider.instance().getConfigs(table, serialized_key, client)
+        def _get_profile(self, table, key):
+            serialized_key = self.connector.serialize_key(key)
+            client = self.connector.get_redis_client(self.connector.db_name)
+            return ProfileProvider.instance().getConfigs(table, serialized_key, client)
         def _append_default_value(self, table, key, data):
             if data is None or len(data) == 0:
                 # empty entry means the entry been deleted
@@ -291,18 +314,59 @@ func NewConfigDBConnector(a ...interface{}) *ConfigDBConnector {
             for field in defaultValues:
                 if field not in data:
                     data[field] = defaultValues[field]
+        def _try_delete_or_revert_profile(self, table, key, data):
+            serialized_key = self.connector.serialize_key(key)
+            client = self.connector.get_redis_client(self.connector.db_name)
+            if data is None or len(data) == 0:
+                # set a entry to empty will delete this entry
+                ProfileProvider.instance().tryDeleteItem(table, serialized_key, client)
+            else:
+                ProfileProvider.instance().tryRevertItem(table, serialized_key, client)
+        def _try_delete_profile_table(self, table):
+            client = self.connector.get_redis_client(self.connector.db_name)
+            keys = ProfileProvider.instance().getKeys(table, client)
+            for key in keys:
+                serialized_key = self.connector.serialize_key(key)
+                ProfileProvider.instance().tryDeleteItem(table, serialized_key, client)
+        def _try_delete_profile(self, config):
+            # the implementation of this method highly related with original mod_config behavior:
+            # 1. any table does not exist in config will not be changed.
+            # 2. any key remove from table will be deleted.
+            # 3. any key exist in table will be updated: if set data of that key to {}, the key also will be deleted.
+            client = self.connector.get_redis_client(self.connector.db_name)
+            profile_config = ProfileProvider.instance().getConfigs(client)
+            # delete/revert key in modified config tables, according to (1) not handle not existed tables
+            for tablename in config:
+                table = config[tablename]
+                if tablename not in profile_config:
+                    continue
+
+                profile_table = profile_config[tablename]
+                # delete removed key according to (2)
+                for key in profile_table:
+                    if key not in table:
+                        serialized_key = self.connector.serialize_key(key)
+                        ProfileProvider.instance().tryDeleteItem(tablename, serialized_key, client)
+                # try delete/revert still existed key according to (3)
+                for key in table:
+                    self._try_delete_or_revert_profile(tablename, key, table[key])
         # override read APIs
         def new_get_entry(self, table, key):
             result = self.connector.get_entry(table, key)
+            if result is None or len(result) == 0:
+                # when there are any user config, profile will be overwrite.
+                result = self._get_profile(table, key)
             self._append_default_value(table, key, result)
             return result
         def new_get_table(self, table):
             result = self.connector.get_table(table)
+            self._append_profile_table(table, result)
             for key in result:
                 self._append_default_value(table, key, result[key])
             return result
         def new_get_config(self):
             result = self.connector.get_config()
+            self._append_profile(result)
             for table in result:
                 for key in result[table]:
                     # Can not pass result[table][key] as parameter here, because python will create a copy. re-assign entry to result to bypass this issue.
@@ -310,6 +374,20 @@ func NewConfigDBConnector(a ...interface{}) *ConfigDBConnector {
                     self._append_default_value(table, key, entry)
                     result[table][key] = entry
             return result
+        # override write and delete APIs
+        def new_set_entry(self, table, key, data):
+            # set a entry to empty will delete this entry
+            self._try_delete_or_revert_profile(table, key, data)
+            return self.connector.set_entry(table, key, data)
+        def new_mod_entry(self, table, key, data):
+            self._try_delete_or_revert_profile(table, key, data)
+            return self.connector.mod_entry(table, key, data)
+        def new_delete_table(self, table):
+            self._try_delete_profile_table(table)
+            return self.connector.delete_table(table)
+        def new_mod_config(self, config):
+            self._try_delete_profile(config)
+            return self.connector.mod_config(config)
         def __getattr__(self, name):
             if name == "get_entry":
                 return self.new_get_entry
@@ -317,6 +395,14 @@ func NewConfigDBConnector(a ...interface{}) *ConfigDBConnector {
                 return self.new_get_table
             elif name == "get_config":
                 return self.new_get_config
+            elif name == "set_entry":
+                return self.new_set_entry
+            elif name == "mod_entry":
+                return self.new_mod_entry
+            elif name == "delete_table":
+                return self.new_delete_table
+            elif name == "mod_config":
+                return self.new_mod_config
 
             originalMethod = self.connector.__getattribute__(name)
             return originalMethod

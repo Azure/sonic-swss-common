@@ -25,6 +25,9 @@ public:
         return !m_buffer.empty();
     }
 
+protected:
+    virtual void onPopUnknownPattern(RedisMessage& message, std::deque<KeyOpFieldsValuesTuple> &vkco);
+
 private:
     /* Pop keyspace event from event buffer. Caller should free resources. */
     std::shared_ptr<RedisReply> popEventBuffer();

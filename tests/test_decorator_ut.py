@@ -36,6 +36,16 @@ def check_read_api_result(decorator, table, key, field, expected):
     config = decorator.get_config()
     assert config[table][key][field] == expected
 
+def check_item_deleted(decorator, table, key):
+    entry = decorator.get_entry(table, key)
+    assert len(entry) == 0
+
+    table_data = decorator.get_table(table)
+    assert key not in table_data
+
+    config = decorator.get_config()
+    assert key not in config[table]
+
 def check_table_read_api_result(table, key, fieldname, expected):
     # check get
     result, fields = table.get(key)
@@ -96,6 +106,114 @@ def test_decorator_read_yang_default_value(prepare_yang_module, reset_database):
     # check read API
     check_read_api_result(decorator, table, key, field, "3")
 
+def test_decorator_read_profile_config(prepare_yang_module, reset_database):
+    """
+    Test YangDefaultDecorator read correct profile.
+    """
+    conn = swsscommon.ConfigDBConnector()
+    decorator = swsscommon.YangDefaultDecorator(conn)
+    decorator.connect(wait_for_init=False)
+
+    # setup profile config
+    profile_conn = swsscommon.ConfigDBConnector()
+    profile_conn.db_connect("PROFILE_DB")
+    table = "INTERFACE"
+    key = "TEST_INTERFACE"
+    profile_field = "profile"
+    profile_value = "value"
+    profile = { profile_field: profile_value }
+    profile_conn.set_entry(table, key, profile)
+
+    # check read API
+    field = "nat_zone"
+    check_read_api_result(decorator, table, key, field, "0")
+    check_read_api_result(decorator, table, key, profile_field, profile_value)
+    
+    # check default value overwrite by profile
+    profile_nat_zone = "1"
+    profile = { field: profile_nat_zone }
+    profile_conn.set_entry(table, key, profile)
+
+    check_read_api_result(decorator, table, key, field, profile_nat_zone)
+
+def test_decorator_delete_profile_config(prepare_yang_module, reset_database):
+    """
+    Test YangDefaultDecorator delete profile.
+    """
+    conn = swsscommon.ConfigDBConnector()
+    decorator = swsscommon.YangDefaultDecorator(conn)
+    decorator.connect(wait_for_init=False)
+
+    # setup profile config
+    profile_conn = swsscommon.ConfigDBConnector()
+    profile_conn.db_connect("PROFILE_DB")
+    table = "INTERFACE"
+    key = "TEST_INTERFACE"
+    profile_field = "profile"
+    profile_value = "value"
+    profile = { profile_field: profile_value }
+    profile_conn.set_entry(table, key, profile)
+    full_config = decorator.get_config()
+
+    # check delete profile by set_entry
+    decorator.set_entry(table, key, None)
+    
+    # profile been deleted from result
+    check_item_deleted(decorator, table, key)
+    
+    # revert deleted profile
+    decorator.set_entry(table, key, profile)
+
+    # profile avaliable again
+    check_read_api_result(decorator, table, key, profile_field, profile_value)
+
+    # check delete profile by mod_entry
+    decorator.mod_entry(table, key, None)
+    
+    # profile been deleted from result
+    check_item_deleted(decorator, table, key)
+    
+    # revert deleted profile
+    decorator.set_entry(table, key, profile)
+
+    # profile avaliable again
+    check_read_api_result(decorator, table, key, profile_field, profile_value)
+
+    # check delete profile by remove key with mod_config
+    full_config = decorator.get_config()
+    full_config[table].pop(key)
+    decorator.mod_config(full_config)
+    
+    # profile been deleted from result
+    check_item_deleted(decorator, table, key)
+    
+    # revert deleted profile
+    decorator.set_entry(table, key, profile)
+
+    # profile avaliable again
+    check_read_api_result(decorator, table, key, profile_field, profile_value)
+
+    # check delete profile by delete_table
+    decorator.delete_table(table)
+    
+    # profile been deleted from result
+    check_item_deleted(decorator, table, key)
+    
+    # revert deleted profile
+    decorator.set_entry(table, key, profile)
+
+    # profile avaliable again
+    check_read_api_result(decorator, table, key, profile_field, profile_value)
+
+    # check mod_config without table
+    full_config = decorator.get_config()
+    full_config.pop(table)
+    print(full_config)
+    decorator.mod_config(full_config)
+
+    # profile should not be deleted
+    check_read_api_result(decorator, table, key, profile_field, profile_value)
+
 def test_table_read_yang_default_value(prepare_yang_module, reset_database):
     """
     Test DecoratorTable read correct default values from Yang model.
@@ -117,13 +235,117 @@ def test_table_read_yang_default_value(prepare_yang_module, reset_database):
     # check read API
     check_table_read_api_result(table, key, fieldname, "0")
 
+def test_table_read_profile_config(prepare_yang_module, reset_database):
+    """
+    Test DecoratorTable read correct profile config.
+    """
+    # setup profile config
+    profile_conn = swsscommon.ConfigDBConnector()
+    profile_conn.db_connect("PROFILE_DB")
+    tablename = "INTERFACE"
+    key = "TEST_INTERFACE"
+    profile_field = "profile"
+    profile_value = "value"
+    profile = { profile_field: profile_value }
+    profile_conn.set_entry(tablename, key, profile)
+
+    # check read API
+    db = swsscommon.DBConnector("CONFIG_DB", 0)
+    table = swsscommon.DecoratorTable(db, 'INTERFACE')
+
+    # check read API
+    yang_field_name = "nat_zone"
+    check_table_read_api_result(table, key, yang_field_name, "0")
+    check_table_read_api_result(table, key, profile_field, profile_value)
+    
+    # overwrite default value in profile
+    profile = { yang_field_name: "1" }
+    profile_conn.set_entry(tablename, key, profile)
+    check_table_read_api_result(table, key, yang_field_name, "1")
+
+def check_table_profile_deleted(table, key, fieldname):
+    # check get
+    result, fields = table.get(key)
+    assert result == False
+    
+    # check hget
+    result, value = table.hget(key, fieldname)
+    assert result == False
+    
+    # check getKeys
+    keys = table.getKeys()
+    assert len(keys) == 0
+
+def test_table_delete_profile_config(prepare_yang_module, reset_database):
+    """
+    Test DecoratorTable delete/revert profile config.
+    """
+    # setup profile config
+    profile_conn = swsscommon.ConfigDBConnector()
+    profile_conn.db_connect("PROFILE_DB")
+    tablename = "INTERFACE"
+    key = "TEST_INTERFACE"
+    profile_field = "profile"
+    profile_value = "value"
+    profile = { profile_field: profile_value }
+    profile_conn.set_entry(tablename, key, profile)
+
+    db = swsscommon.DBConnector("CONFIG_DB", 0)
+    table = swsscommon.DecoratorTable(db, 'INTERFACE')
+
+    # test delete profile by set()
+    fvs = swsscommon.FieldValuePairs([])
+    table.set(key, fvs, "", "", 100)
+    check_table_profile_deleted(table, key, profile_field)
+
+    # revert profile
+    fvs = swsscommon.FieldValuePairs([(profile_field, profile_value)])
+    table.set(key, fvs, "", "", 100)
+
+    # check read API
+    yang_field_name = "nat_zone"
+    check_table_read_api_result(table, key, yang_field_name, "0")
+    check_table_read_api_result(table, key, profile_field, profile_value)
+
+    # test delete profile by delete()
+    table.delete(key, "", "")
+    check_table_profile_deleted(table, key, profile_field)
+
+    # revert profile
+    fvs = swsscommon.FieldValuePairs([(profile_field, profile_value)])
+    table.set(key, fvs, "", "", 100)
+
+    # check read API
+    yang_field_name = "nat_zone"
+    check_table_read_api_result(table, key, yang_field_name, "0")
+    check_table_read_api_result(table, key, profile_field, profile_value)
+
+    # test revert by hset
+    table.delete(key, "", "")
+    check_table_profile_deleted(table, key, profile_field)
+
+    # revert by hset
+    table.hset(key, profile_field, profile_value, "", "")
+
+    # check read API
+    yang_field_name = "nat_zone"
+    check_table_read_api_result(table, key, yang_field_name, "0")
+    check_table_read_api_result(table, key, profile_field, profile_value)
+
 def test_DecoratorSubscriberStateTable(prepare_yang_module, reset_database):
     """
-    Test DecoratorSubscriberStateTable can decorate default value.
+    Test DecoratorSubscriberStateTable can listen delete event and  decorate default value.
     """
+    # setup profile config
+    profile_conn = swsscommon.ConfigDBConnector()
+    profile_conn.db_connect("PROFILE_DB")
     tablename = "INTERFACE"
     profile_key = "TEST_INTERFACE"
-    
+    profile_field = "profile"
+    profile_value = "value"
+    profile = { profile_field: profile_value }
+    profile_conn.set_entry(tablename, profile_key, profile)
+
     # setup select
     db = swsscommon.DBConnector("CONFIG_DB", 0, True)
     db.flushdb()
@@ -132,7 +354,19 @@ def test_DecoratorSubscriberStateTable(prepare_yang_module, reset_database):
     cst = swsscommon.DecoratorSubscriberStateTable(db, tablename)
     sel.addSelectable(cst)
 
-    # set profile
+    # delete profile by set empty value
+    fvs = swsscommon.FieldValuePairs([])
+    table.set(profile_key, fvs, "", "", 100)
+
+    # check select event
+    (state, c) = sel.select()
+    assert state == swsscommon.Select.OBJECT
+    (key, op, cfvs) = cst.pop()
+    assert key == profile_key
+    assert op == "DEL"
+    assert len(cfvs) == 0
+    
+    # revert deleted profile
     fvs = swsscommon.FieldValuePairs([('a','b')])
     table.set(profile_key, fvs, "", "", 100)
 
@@ -173,4 +407,5 @@ def test_DecoratorSubscriberStateTable(prepare_yang_module, reset_database):
             assert cfvs[0] == ('a', 'b')
             assert cfvs[1] == ('nat_zone', '1')
     assert entry_exist
+
     

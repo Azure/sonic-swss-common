@@ -118,7 +118,8 @@ void SubscriberStateTable::pops(deque<KeyOpFieldsValuesTuple> &vkco, const strin
         auto ctx = event->getContext()->element[1];
         if (message.pattern != m_keyspace)
         {
-            SWSS_LOG_ERROR("invalid pattern %s returned for pmessage of %s", message.pattern.c_str(), m_keyspace.c_str());
+            // Inherited class may subscribe more pattern and handle their pattern by override  onPopUnknownPattern method.
+            onPopUnknownPattern(message, vkco);
             continue;
         }
 
@@ -175,6 +176,11 @@ shared_ptr<RedisReply> SubscriberStateTable::popEventBuffer()
     m_keyspace_event_buffer.pop_front();
 
     return reply;
+}
+
+void SubscriberStateTable::onPopUnknownPattern(RedisMessage& message, deque<KeyOpFieldsValuesTuple> &vkco)
+{
+    SWSS_LOG_ERROR("invalid pattern %s returned for pmessage of %s", message.pattern.c_str(), m_keyspace.c_str());
 }
 
 }

@@ -23,7 +23,14 @@ public:
     void pops(std::deque<KeyOpFieldsValuesTuple> &vkco, const std::string &prefix = EMPTY_PREFIX) override;
 
 private:
+    std::string m_profile_keyspace;
+
+    std::string m_profile_keyprefix;
+
     std::shared_ptr<DefaultValueProvider> m_defaultValueProvider;
+
+    /* Handle SubscriberStateTable unknown pattern */
+    void onPopUnknownPattern(RedisMessage& message, std::deque<KeyOpFieldsValuesTuple> &vkco) override;
 
     void appendDefaultValue(std::string &key, std::string &op, std::vector<FieldValueTuple> &fvs);
 };
