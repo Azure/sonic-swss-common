@@ -142,10 +142,20 @@ reader; invalid policy or rejected credentials fail construction. Opt-in does
 not grant access to credentials. Nonzero constructor timeouts also bound AUTH.
 
 This addition changes C++ object layout; rebuild dependent native applications
-and language bindings with the matching library. Higher-level connector
-constructor options and raw-client adapters are separate follow-ups.
+and language bindings with the matching library. Raw-client adapters are separate follow-ups.
 
 The focused tests require an explicitly selected disposable root container:
 `SWSS_AUTH_TEST_CONTAINER=1 pytest --noconftest tests/test_redis_authentication.py`.
 They refuse to replace an existing authentication-policy directory.
 
+
+## Explicit higher-level connector authentication
+
+`SonicV2Connector(use_unix_socket_path=True, authenticate=True)` requests native
+authentication for named connections and recovery. Both options default to false;
+authentication does not change the requested transport. `ConfigDBConnector` and
+`ConfigDBPipeConnector` accept the same options.
+
+Native DBInterface callers select the transport with `set_redis_kwargs` and use
+`connect(db_name, key, retry, authenticate=True)` to opt in.
+Authentication and endpoint selection are retained through subscription recovery.

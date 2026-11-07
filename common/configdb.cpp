@@ -8,8 +8,8 @@
 using namespace std;
 using namespace swss;
 
-ConfigDBConnector_Native::ConfigDBConnector_Native(bool use_unix_socket_path, const char *netns)
-    : SonicV2Connector_Native(use_unix_socket_path, netns)
+ConfigDBConnector_Native::ConfigDBConnector_Native(bool use_unix_socket_path, const char *netns, bool authenticate)
+    : SonicV2Connector_Native(use_unix_socket_path, netns, authenticate)
     , m_table_name_separator("|")
     , m_key_separator("|")
 {
@@ -262,8 +262,8 @@ std::string ConfigDBConnector_Native::getDbName() const
     return m_db_name;
 }
 
-ConfigDBPipeConnector_Native::ConfigDBPipeConnector_Native(bool use_unix_socket_path, const char *netns)
-    : ConfigDBConnector_Native(use_unix_socket_path, netns)
+ConfigDBPipeConnector_Native::ConfigDBPipeConnector_Native(bool use_unix_socket_path, const char *netns, bool authenticate)
+    : ConfigDBConnector_Native(use_unix_socket_path, netns, authenticate)
 {
 }
 

@@ -199,33 +199,39 @@ def test_authentication_timeout(protected):
     listener = socket.socket(socket.AF_UNIX)
     listener.bind(path)
     listener.listen(1)
+    listener.settimeout(1)
     stop = threading.Event()
 
     def stall():
-        connection, _ = listener.accept()
-        with connection:
-            connection.recv(1024)
-            stop.wait(3)
+        try:
+            connection, _ = listener.accept()
+            with connection:
+                connection.settimeout(1)
+                connection.recv(1024)
+                stop.wait(3)
+        except socket.timeout:
+            pass
 
-    thread = threading.Thread(target=stall)
-    thread.start()
-    for file, field in [("metadata", None), ("policy", "unix_socket")]:
-        data = json.loads(protected[file].read_text())
-        if field:
-            data[field] = path
-        else:
-            data["INSTANCES"]["redis"]["unix_socket_path"] = path
-        protected[file].write_text(json.dumps(data))
-    swss.SonicDBConfig.reset()
-    swss.SonicDBConfig.initialize(str(protected["metadata"]))
+    thread = threading.Thread(target=stall, daemon=True)
     try:
+        for file, field in [("metadata", None), ("policy", "unix_socket")]:
+            data = json.loads(protected[file].read_text())
+            if field:
+                data[field] = path
+            else:
+                data["INSTANCES"]["redis"]["unix_socket_path"] = path
+            protected[file].write_text(json.dumps(data))
+        swss.SonicDBConfig.reset()
+        swss.SonicDBConfig.initialize(str(protected["metadata"]))
+        thread.start()
         started = time.monotonic()
         with pytest.raises(RuntimeError, match="authentication"):
             swss.DBConnector("STATE_DB", 100, False, "", True)
         assert time.monotonic() - started < 2
     finally:
         stop.set()
-        thread.join(timeout=4)
+        if thread.ident is not None:
+            thread.join(timeout=4)
         listener.close()
 
 

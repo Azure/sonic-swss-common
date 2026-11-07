@@ -12,7 +12,7 @@ class ConfigDBConnector_Native : public SonicV2Connector_Native
 public:
     static constexpr const char *INIT_INDICATOR = "CONFIG_DB_INITIALIZED";
 
-    ConfigDBConnector_Native(bool use_unix_socket_path = false, const char *netns = "");
+    ConfigDBConnector_Native(bool use_unix_socket_path = false, const char *netns = "", bool authenticate = false);
 
     void db_connect(std::string db_name, bool wait_for_init = false, bool retry_on = false);
     void connect(bool wait_for_init = true, bool retry_on = false);
@@ -59,12 +59,12 @@ func NewConfigDBConnector(a ...interface{}) *ConfigDBConnector {
     class ConfigDBConnector(SonicV2Connector, ConfigDBConnector_Native):
 
         ## Note: there is no easy way for SWIG to map ctor parameter netns(C++) to namespace(python)
-        def __init__(self, use_unix_socket_path = False, namespace = '', **kwargs):
+        def __init__(self, use_unix_socket_path = False, namespace = '', authenticate = False, **kwargs):
             if 'decode_responses' in kwargs and kwargs.pop('decode_responses') != True:
                 raise ValueError('decode_responses must be True if specified, False is not supported')
             if namespace is None:
                 namespace = ''
-            super(ConfigDBConnector, self).__init__(use_unix_socket_path = use_unix_socket_path, namespace = namespace)
+            super(ConfigDBConnector, self).__init__(use_unix_socket_path = use_unix_socket_path, namespace = namespace, authenticate = authenticate)
 
             # Trick: to achieve static/instance method "overload", we must use initize the function in ctor
             # ref: https://stackoverflow.com/a/28766809/2514803
@@ -327,7 +327,7 @@ func NewConfigDBConnector(a ...interface{}) *ConfigDBConnector {
 class ConfigDBPipeConnector_Native: public ConfigDBConnector_Native
 {
 public:
-    ConfigDBPipeConnector_Native(bool use_unix_socket_path = false, const char *netns = "");
+    ConfigDBPipeConnector_Native(bool use_unix_socket_path = false, const char *netns = "", bool authenticate = false);
 
     void set_entry(std::string table, std::string key, const std::map<std::string, std::string>& data) override;
     void mod_config(const std::map<std::string, std::map<std::string, std::map<std::string, std::string>>>& data) override;

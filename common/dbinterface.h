@@ -4,6 +4,7 @@
 #include <unistd.h>
 #include <stdexcept>
 #include <memory>
+#include <functional>
 
 #include "dbconnector.h"
 #include "logger.h"
@@ -33,6 +34,18 @@ class DBInterface
 {
 public:
     void connect(int dbId, const std::string& dbName, bool retry = true);
+    // Named DB metadata; set_redis_kwargs selects Unix or TCP transport.
+    void connect(const std::string& dbName, const SonicDBKey& key, bool retry = true, bool authenticate = false);
+#if defined(SWIG) && defined(SWIGPYTHON)
+%pythoncode %{
+    # Preserve the original keyword arguments when dispatching C++ overloads.
+    def connect(self, dbId, dbName, retry=True, authenticate=None):
+        args = (dbId, dbName, retry)
+        if authenticate is not None:
+            args += (authenticate,)
+        return _swsscommon.DBInterface_connect(self, *args)
+%}
+#endif
     void close(const std::string& dbName);
     void close();
     int64_t del(const std::string& dbName, const std::string& key, bool blocking = false);
@@ -67,17 +80,15 @@ public:
 
 private:
     template <typename T, typename FUNC>
-    T blockable(FUNC f, const std::string& dbName, bool blocking = false);
+    T blockable(FUNC f, const std::string& dbName, bool blocking = false,
+                std::function<void()> connect = nullptr, bool retry = true, bool authenticate = false);
     // Unsubscribe the chosent client from keyspace event notifications
     void _unsubscribe_keyspace_notification(const std::string& dbName);
     bool _unavailable_data_handler(const std::string& dbName, const char *data);
     // Subscribe the chosent client to keyspace event notifications
     void _subscribe_keyspace_notification(const std::string& dbName);
-    // In the event Redis is unavailable, close existing connections, and try again.
-    void _connection_error_handler(const std::string& dbName);
     void _onetime_connect(int dbId, const std::string& dbName);
-    // Keep reconnecting to Database 'dbId' until success
-    void _persistent_connect(int dbId, const std::string& dbName);
+    void _onetime_connect(const std::string& dbName, const SonicDBKey& key, bool isTcpConn, bool authenticate);
 
     // Redis keyspace notifications must be enabled by server configuration before
     // callers subscribe through this interface.
