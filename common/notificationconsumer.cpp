@@ -69,6 +69,123 @@ swss::NotificationConsumer::NotificationConsumer(swss::DBConnector *db,
     subscribeWithRetry();
 }
 
+swss::NotificationConsumer::NotificationConsumer(const std::string &channel,
+                                                 NotificationQueuePolicy policy,
+                                                 int pri,
+                                                 size_t popBatchSize):
+    Selectable(pri),
+    POP_BATCH_SIZE(popBatchSize),
+    m_in_process(true),
+    m_selectableEvent(std::make_unique<SelectableEvent>(pri)),
+    m_db(nullptr),
+    m_channel(channel),
+    m_queue(policy == NotificationQueuePolicy::LruDedup
+            ? std::unique_ptr<NotificationQueueBase>(std::make_unique<LruDedupNotificationQueue>(channel))
+            : std::unique_ptr<NotificationQueueBase>(std::make_unique<FifoNotificationQueue>()))
+{
+    SWSS_LOG_ENTER();
+    SWSS_LOG_NOTICE("NotificationConsumer[%s]: in-process delivery (eventfd, no Redis subscribe)",
+                    channel.c_str());
+}
+
+swss::NotificationConsumer::~NotificationConsumer()
+{
+    SWSS_LOG_ENTER();
+}
+
+std::string swss::NotificationConsumer::buildWireMessage(
+        const std::string &op,
+        const std::string &data,
+        const std::vector<FieldValueTuple> &values) const
+{
+    std::vector<FieldValueTuple> wireValues;
+    wireValues.emplace_back(op, data);
+    wireValues.insert(wireValues.end(), values.begin(), values.end());
+    return JSon::buildJson(wireValues);
+}
+
+/*
+ * Admit one wire-format message: count it, apply the op allowlist, then push
+ * it onto the queue.  Shared by the Redis path (processReply) and the
+ * in-process path (send()).  The caller must hold m_queueMutex.
+ */
+void swss::NotificationConsumer::admitWireMessageLocked(const std::string &msg)
+{
+    m_received.fetch_add(1, std::memory_order_relaxed);
+
+    if (!m_op_allowlist.empty())
+    {
+        auto op = peekOp(msg);
+        // Drop messages whose op is not in the allowlist before they
+        // consume queue memory.  This is the cross-fanout defense for
+        // shared channels like "NOTIFICATIONS": each subscriber
+        // declares exactly which ops its doTask cares about and
+        // silently drops the rest at admission instead of after pop.
+        if (op.empty() || m_op_allowlist.find(op) == m_op_allowlist.end())
+        {
+            m_dropped_allowlist.fetch_add(1, std::memory_order_relaxed);
+            maybeLogStats();
+            return;
+        }
+    }
+
+    m_queue->push(msg);
+    maybeLogStats();
+}
+
+void swss::NotificationConsumer::send(const std::string &op,
+                                      const std::string &data,
+                                      const std::vector<FieldValueTuple> &values)
+{
+    SWSS_LOG_ENTER();
+
+    // send() is called from SAI callback threads, where an escaping
+    // exception would terminate the process.  It therefore never throws:
+    // failures are logged and the notification is dropped.
+    if (!m_in_process)
+    {
+        SWSS_LOG_ERROR("NotificationConsumer::send on Redis-subscribe consumer (channel %s), dropping op %s",
+                       m_channel.c_str(), op.c_str());
+        return;
+    }
+
+    try
+    {
+        const auto wire = buildWireMessage(op, data, values);
+
+        {
+            std::lock_guard<std::mutex> lock(m_queueMutex);
+            admitWireMessageLocked(wire);
+        }
+
+        m_selectableEvent->notify();
+    }
+    catch (const std::exception &e)
+    {
+        SWSS_LOG_ERROR("NotificationConsumer::send failed on channel %s, dropping op %s: %s",
+                       m_channel.c_str(), op.c_str(), e.what());
+    }
+    catch (...)
+    {
+        SWSS_LOG_ERROR("NotificationConsumer::send failed on channel %s, dropping op %s: unknown exception",
+                       m_channel.c_str(), op.c_str());
+    }
+}
+
+void swss::NotificationConsumer::notifyPending()
+{
+    if (!m_in_process || !m_selectableEvent)
+    {
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock(m_queueMutex);
+    if (!m_queue->empty())
+    {
+        m_selectableEvent->notify();
+    }
+}
+
 // Both constructors share the same subscribe-and-retry loop.  Any
 // future change (backoff, retry limit, error reporting) lives here
 // in one place.
@@ -117,12 +234,22 @@ void swss::NotificationConsumer::subscribe()
 
 int swss::NotificationConsumer::getFd()
 {
+    if (m_in_process)
+    {
+        return m_selectableEvent->getFd();
+    }
+
     return m_subscribe->getContext()->fd;
 }
 
 uint64_t swss::NotificationConsumer::readData()
 {
     SWSS_LOG_ENTER();
+
+    if (m_in_process)
+    {
+        return m_selectableEvent->readData();
+    }
 
     redisReply *reply = nullptr;
 
@@ -160,11 +287,13 @@ uint64_t swss::NotificationConsumer::readData()
 
 bool swss::NotificationConsumer::hasData()
 {
+    std::lock_guard<std::mutex> lock(m_queueMutex);
     return m_queue->size() > 0;
 }
 
 bool swss::NotificationConsumer::hasCachedData()
 {
+    std::lock_guard<std::mutex> lock(m_queueMutex);
     return m_queue->size() > 1;
 }
 
@@ -193,30 +322,18 @@ void swss::NotificationConsumer::processReply(redisReply *reply)
 
     SWSS_LOG_DEBUG("got message: %s", msg.c_str());
 
-    m_received.fetch_add(1, std::memory_order_relaxed);
-
-    if (!m_op_allowlist.empty())
     {
-        auto op = peekOp(msg);
-        // Drop messages whose op is not in the allowlist before they
-        // consume queue memory.  This is the cross-fanout defense for
-        // shared channels like "NOTIFICATIONS": each subscriber
-        // declares exactly which ops its doTask cares about and
-        // silently drops the rest at admission instead of after pop.
-        if (op.empty() || m_op_allowlist.find(op) == m_op_allowlist.end())
-        {
-            m_dropped_allowlist.fetch_add(1, std::memory_order_relaxed);
-            maybeLogStats();
-            return;
-        }
+        std::lock_guard<std::mutex> lock(m_queueMutex);
+        admitWireMessageLocked(msg);
     }
-
-    m_queue->push(msg);
-    maybeLogStats();
 }
 
 void swss::NotificationConsumer::setStatsLabel(const std::string &label)
 {
+    // m_stats_label is read under m_queueMutex on the admission path, so
+    // write it under the same lock.
+    std::lock_guard<std::mutex> lock(m_queueMutex);
+
     m_stats_label = label;
     // If the underlying queue is LruDedup, propagate the label so the
     // queue-side stats / HWM lines use the same identifier.
@@ -230,6 +347,10 @@ void swss::NotificationConsumer::setStatsLabel(const std::string &label)
 
 void swss::NotificationConsumer::setOpAllowList(std::unordered_set<std::string> ops)
 {
+    // m_op_allowlist is read under m_queueMutex on the admission path, so
+    // write it under the same lock.
+    std::lock_guard<std::mutex> lock(m_queueMutex);
+
     m_op_allowlist = std::move(ops);
     SWSS_LOG_NOTICE("NotificationConsumer[%s]: op allowlist set to %zu entries",
                     (m_stats_label.empty() ? m_channel : m_stats_label).c_str(),
@@ -268,14 +389,20 @@ void swss::NotificationConsumer::pop(std::string &op, std::string &data, std::ve
 {
     SWSS_LOG_ENTER();
 
-    if (m_queue->empty())
-    {
-        SWSS_LOG_ERROR("notification queue is empty, can't pop");
-        throw std::runtime_error("notification queue is empty, can't pop");
-    }
+    std::string msg;
 
-    std::string msg = m_queue->front();
-    m_queue->pop();
+    {
+        std::lock_guard<std::mutex> lock(m_queueMutex);
+
+        if (m_queue->empty())
+        {
+            SWSS_LOG_ERROR("notification queue is empty, can't pop");
+            throw std::runtime_error("notification queue is empty, can't pop");
+        }
+
+        msg = m_queue->front();
+        m_queue->pop();
+    }
 
     values.clear();
     JSon::readJson(msg, values);
@@ -293,6 +420,29 @@ void swss::NotificationConsumer::pops(std::deque<KeyOpFieldsValuesTuple> &vkco)
     SWSS_LOG_ENTER();
 
     vkco.clear();
+
+    if (m_in_process)
+    {
+        for (size_t i = 0; i < POP_BATCH_SIZE; ++i)
+        {
+            std::string op;
+            std::string data;
+            std::vector<FieldValueTuple> values;
+
+            {
+                std::lock_guard<std::mutex> lock(m_queueMutex);
+                if (m_queue->empty())
+                {
+                    break;
+                }
+            }
+
+            pop(op, data, values);
+            vkco.emplace_back(data, op, values);
+        }
+        return;
+    }
+
     while(!m_queue->empty())
     {
         while(!m_queue->empty())
@@ -321,17 +471,29 @@ void swss::NotificationConsumer::pops(std::deque<KeyOpFieldsValuesTuple> &vkco)
 int swss::NotificationConsumer::peek()
 {
     SWSS_LOG_ENTER();
-    if (m_queue->empty())
-    {
-        // Peek for more data in redis socket
-        int rc = swss::peekRedisContext(m_subscribe->getContext());
-        if (rc <= 0)
-            return rc;
 
-        // Feed into internal queue
-        readData();
+    {
+        std::lock_guard<std::mutex> lock(m_queueMutex);
+        if (!m_queue->empty())
+        {
+            return 1;
+        }
     }
 
+    if (m_in_process)
+    {
+        return 0;
+    }
+
+    // Peek for more data in redis socket
+    int rc = swss::peekRedisContext(m_subscribe->getContext());
+    if (rc <= 0)
+        return rc;
+
+    // Feed into internal queue
+    readData();
+
+    std::lock_guard<std::mutex> lock(m_queueMutex);
     return m_queue->empty() ? 0 : 1;
 }
 

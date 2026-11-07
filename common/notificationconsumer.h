@@ -18,7 +18,10 @@
 #include "logger.h"
 #include "redisreply.h"
 #include "selectable.h"
+#include "selectableevent.h"
 #include "table.h"
+
+#include <mutex>
 
 namespace swss {
 
@@ -235,6 +238,28 @@ public:
                          size_t popBatchSize,
                          NotificationQueuePolicy policy);
 
+    // In-process delivery (ZMQ orchagent callback -> send()).  No Redis
+    // subscribe; the Select loop waits on an internal eventfd.  channel is
+    // the logical notification channel name (logging/stats), typically
+    // "NOTIFICATIONS".
+    NotificationConsumer(const std::string &channel,
+                         NotificationQueuePolicy policy,
+                         int pri = 100,
+                         size_t popBatchSize = DEFAULT_NC_POP_BATCH_SIZE);
+
+    // Thread-safe: enqueue from libsairedis notification callback thread.
+    // Only valid for in-process consumers (isInProcessDelivery()).
+    // Never throws: on a Redis-subscribed consumer, or on any internal
+    // failure, the notification is logged and dropped.
+    void send(const std::string &op,
+              const std::string &data,
+              const std::vector<FieldValueTuple> &values);
+
+    // Wake the Select loop when readiness transitions (queue may already hold data).
+    void notifyPending();
+
+    bool isInProcessDelivery() const { return m_in_process; }
+
     // Pop one or multiple data from the internal queue which fed from redis socket
     // Note:
     //    Ensure data ready before popping, either by select or peek
@@ -248,7 +273,7 @@ public:
     //    -1 - error during peeking redis socket
     int peek();
 
-    ~NotificationConsumer() = default;
+    ~NotificationConsumer() override;
 
     int getFd() override;
     uint64_t readData() override;
@@ -263,7 +288,7 @@ public:
     // both the consumer's periodic stats line and the internal LruDedup
     // queue's HWM / stats lines use this label instead of the bare
     // channel name.  Empty (default) preserves legacy channel-only
-    // logging.
+    // logging.  Thread-safe with respect to send() and the admission path.
     void setStatsLabel(const std::string &label);
 
     // Restrict which messages are admitted into the internal queue.
@@ -279,6 +304,9 @@ public:
     // queue memory.  This is the consumer-side defense against pub/sub
     // fanout on the "NOTIFICATIONS" channel, where every subscriber
     // receives a copy of every message even if it only cares about one op.
+    //
+    // Thread-safe with respect to send() and the admission path: it takes
+    // the same lock the allowlist is read under.
     void setOpAllowList(std::unordered_set<std::string> ops);
 
     // Snapshot of admission counters.  Lock-free.
@@ -309,6 +337,17 @@ private:
     void subscribe();
     void subscribeWithRetry();
     void maybeLogStats();
+
+    std::string buildWireMessage(const std::string &op,
+                                 const std::string &data,
+                                 const std::vector<FieldValueTuple> &values) const;
+
+    // Caller must hold m_queueMutex.  Applies allowlist and pushes to m_queue.
+    void admitWireMessageLocked(const std::string &msg);
+
+    bool m_in_process{false};
+    std::unique_ptr<SelectableEvent> m_selectableEvent;
+    mutable std::mutex m_queueMutex;
 
     swss::DBConnector *m_db;
     std::unique_ptr<swss::DBConnector> m_subscribe;
