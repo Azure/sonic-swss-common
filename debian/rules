@@ -37,6 +37,16 @@ else
 CONFIGURE_ARGS += --enable-yangmodules
 endif
 
+# Build the OTLP sink only when the 'otlp' build profile is active. The
+# OTLP sink depends on opentelemetry-cpp, which is not yet packaged in
+# every distribution; the default build keeps OTLP off so behaviour is
+# unchanged.
+ifneq (,$(filter otlp,$(DEB_BUILD_PROFILES)))
+CONFIGURE_ARGS += --enable-otlp
+else
+CONFIGURE_ARGS += --disable-otlp
+endif
+
 # main packaging script
 %:
 	dh $@

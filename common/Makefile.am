@@ -133,6 +133,15 @@ common_libswsscommon_la_SOURCES += \
 common_libswsscommon_la_LIBADD += -lyang
 endif
 
+if OTLP
+common_libswsscommon_la_SOURCES += \
+    common/component_stats_otlp.cpp
+
+common_libswsscommon_la_CPPFLAGS += $(OPENTELEMETRY_CFLAGS)
+common_libswsscommon_la_CXXFLAGS += $(OPENTELEMETRY_CFLAGS)
+common_libswsscommon_la_LIBADD   += $(OPENTELEMETRY_LIBS)
+endif
+
 common_swssloglevel_SOURCES =  \
 	common/loglevel.cpp        \
 	common/loglevel_util.cpp

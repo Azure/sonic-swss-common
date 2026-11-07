@@ -60,3 +60,9 @@ tests_tests_LDADD = $(LDADD_GTEST) -lpthread common/libswsscommon.la $(LIBNL_LIB
 if YANGMODS
 tests_tests_SOURCES += tests/defaultvalueprovider_ut.cpp
 endif
+
+if OTLP
+tests_tests_SOURCES += tests/component_stats_otlp_ut.cpp
+tests_tests_CPPFLAGS += $(OPENTELEMETRY_CFLAGS)
+tests_tests_LDADD    += $(OPENTELEMETRY_LIBS)
+endif
