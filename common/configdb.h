@@ -74,6 +74,7 @@ func NewConfigDBConnector(a ...interface{}) *ConfigDBConnector {
             ## Note: callback is difficult to implement by SWIG C++, so keep in python
             self.handlers = {}
             self.fire_init_data = {}
+            self.supported_tables = []
 
         def __enter__(self):
             return self
@@ -216,7 +217,49 @@ func NewConfigDBConnector(a ...interface{}) *ConfigDBConnector {
             if table in self.handlers:
                 self.handlers.pop(table)
 
+        def load_yang_tables(self):
+            if not self.supported_tables:
+                import sonic_yang
+                sy = sonic_yang.SonicYang("/usr/local/yang-models")
+                sy.loadYangModel()
+                yang_tables = [k for k, v in sy.confDbYangMap.items() if "container" in v]
+                non_yang_tables = [
+                    "DEBUG_COUNTER",
+                    "DEBUG_COUNTER_DROP_REASON",
+                    "DTEL",
+                    "DTEL_REPORT_SESSION",
+                    "DTEL_INT_SESSION",
+                    "DTEL_QUEUE_REPORT",
+                    "DTEL_EVENT",
+                    "FDB",
+                    "GEARBOX",
+                    "LOGGING",
+                    "PASS_THROUGH_ROUTE_TABLE",
+                    "SEND_TO_INGRESS_PORT",
+                    "STP",
+                    "STP_PORT",
+                    "STP_VLAN_PORT",
+                    "STP_VLAN",
+                    "TC_TO_DOT1P_MAP",
+                    "TWAMP_SESSION",
+                    "VNET_ROUTE",
+                    "VNET_ROUTE_TUNNEL",
+                    "VRRP",
+                    "VRRP6",
+                    "WATERMARK_TABLE"
+                ]
+                self.supported_tables = yang_tables + non_yang_tables
+
+        def check_table_support(self, table):
+            if self.db_name != "CONFIG_DB":
+                return
+
+            self.load_yang_tables()
+            if table not in self.supported_tables:
+                raise ValueError("{} is not supported due to missing YANG model".format(table))
+
         def set_entry(self, table, key, data):
+            self.check_table_support(table)
             key = self.serialize_key(key)
             raw_data = self.typed_to_raw(data)
             super(ConfigDBConnector, self).set_entry(table, key, raw_data)
@@ -224,6 +267,7 @@ func NewConfigDBConnector(a ...interface{}) *ConfigDBConnector {
         def mod_config(self, data):
             raw_config = {}
             for table_name, table_data in data.items():
+                self.check_table_support(table_name)
                 if table_data == {}:
                     # When table data is {}, no action.
                     continue
@@ -238,6 +282,7 @@ func NewConfigDBConnector(a ...interface{}) *ConfigDBConnector {
             super(ConfigDBConnector, self).mod_config(raw_config)
 
         def mod_entry(self, table, key, data):
+            self.check_table_support(table)
             key = self.serialize_key(key)
             raw_data = self.typed_to_raw(data)
             super(ConfigDBConnector, self).mod_entry(table, key, raw_data)

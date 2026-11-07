@@ -375,16 +375,16 @@ def test_ConfigDBConnector():
     assert config_db.db_name == "CONFIG_DB"
     assert config_db.TABLE_NAME_SEPARATOR == "|"
     config_db.get_redis_client(config_db.CONFIG_DB).flushdb()
-    config_db.set_entry("TEST_PORT", "Ethernet111", {"alias": "etp1x"})
+    config_db.set_entry("PORT", "Ethernet111", {"alias": "etp1x"})
     allconfig = config_db.get_config()
-    assert allconfig["TEST_PORT"]["Ethernet111"]["alias"] == "etp1x"
+    assert allconfig["PORT"]["Ethernet111"]["alias"] == "etp1x"
 
-    config_db.set_entry("TEST_PORT", "Ethernet111", {"mtu": "12345"})
+    config_db.set_entry("PORT", "Ethernet111", {"mtu": "12345"})
     allconfig =  config_db.get_config()
-    assert "alias" not in allconfig["TEST_PORT"]["Ethernet111"]
-    assert allconfig["TEST_PORT"]["Ethernet111"]["mtu"] == "12345"
+    assert "alias" not in allconfig["PORT"]["Ethernet111"]
+    assert allconfig["PORT"]["Ethernet111"]["mtu"] == "12345"
 
-    config_db.delete_table("TEST_PORT")
+    config_db.delete_table("PORT")
     allconfig =  config_db.get_config()
     assert len(allconfig) == 0
 
@@ -418,27 +418,27 @@ def test_ConfigDBPipeConnector():
     #
 
     # Verify entry set
-    config_db.set_entry("PORT_TABLE", "Ethernet1", {"alias": "etp1x"})
+    config_db.set_entry("PORT", "Ethernet1", {"alias": "etp1x"})
     allconfig = config_db.get_config()
-    assert allconfig["PORT_TABLE"]["Ethernet1"]["alias"] == "etp1x"
+    assert allconfig["PORT"]["Ethernet1"]["alias"] == "etp1x"
 
     config_db.set_entry("ACL_TABLE", "EVERFLOW", {"ports": ["Ethernet0", "Ethernet4", "Ethernet8", "Ethernet12"]})
     allconfig = config_db.get_config()
     assert allconfig["ACL_TABLE"]["EVERFLOW"]["ports"] == ["Ethernet0", "Ethernet4", "Ethernet8", "Ethernet12"]
 
     # Verify entry update
-    config_db.set_entry("PORT_TABLE", "Ethernet1", {"mtu": "12345"})
+    config_db.set_entry("PORT", "Ethernet1", {"mtu": "12345"})
     allconfig = config_db.get_config()
-    assert "alias" not in allconfig["PORT_TABLE"]["Ethernet1"]
-    assert allconfig["PORT_TABLE"]["Ethernet1"]["mtu"] == "12345"
+    assert "alias" not in allconfig["PORT"]["Ethernet1"]
+    assert allconfig["PORT"]["Ethernet1"]["mtu"] == "12345"
 
     # Verify entry clear
-    config_db.set_entry("PORT_TABLE", "Ethernet1", {})
+    config_db.set_entry("PORT", "Ethernet1", {})
     allconfig = config_db.get_config()
-    assert len(allconfig["PORT_TABLE"]["Ethernet1"]) == 0
+    assert len(allconfig["PORT"]["Ethernet1"]) == 0
 
     # Verify entry delete
-    config_db.set_entry("PORT_TABLE", "Ethernet1", None)
+    config_db.set_entry("PORT", "Ethernet1", None)
     config_db.set_entry("ACL_TABLE", "EVERFLOW", None)
     allconfig = config_db.get_config()
     assert len(allconfig) == 0
@@ -448,17 +448,17 @@ def test_ConfigDBPipeConnector():
     #
 
     # Verify entry set
-    allconfig.setdefault("PORT_TABLE", {}).setdefault("Ethernet1", {})
-    allconfig["PORT_TABLE"]["Ethernet1"]["alias"] = "etp1x"
+    allconfig.setdefault("PORT", {}).setdefault("Ethernet1", {})
+    allconfig["PORT"]["Ethernet1"]["alias"] = "etp1x"
     config_db.mod_config(allconfig)
     allconfig = config_db.get_config()
-    assert allconfig["PORT_TABLE"]["Ethernet1"]["alias"] == "etp1x"
+    assert allconfig["PORT"]["Ethernet1"]["alias"] == "etp1x"
 
-    allconfig.setdefault("VLAN_TABLE", {})
-    allconfig["VLAN_TABLE"]["Vlan1"] = {}
+    allconfig.setdefault("VLAN", {})
+    allconfig["VLAN"]["Vlan1"] = {}
     config_db.mod_config(allconfig)
     allconfig = config_db.get_config()
-    assert len(allconfig["VLAN_TABLE"]["Vlan1"]) == 0
+    assert len(allconfig["VLAN"]["Vlan1"]) == 0
 
     allconfig.setdefault("ACL_TABLE", {}).setdefault("EVERFLOW", {})
     allconfig["ACL_TABLE"]["EVERFLOW"]["ports"] = ["Ethernet0", "Ethernet4", "Ethernet8", "Ethernet12"]
@@ -467,8 +467,8 @@ def test_ConfigDBPipeConnector():
     assert allconfig["ACL_TABLE"]["EVERFLOW"]["ports"] == ["Ethernet0", "Ethernet4", "Ethernet8", "Ethernet12"]
 
     # Verify entry delete
-    allconfig["PORT_TABLE"]["Ethernet1"] = None
-    allconfig["VLAN_TABLE"]["Vlan1"] = None
+    allconfig["PORT"]["Ethernet1"] = None
+    allconfig["VLAN"]["Vlan1"] = None
     allconfig["ACL_TABLE"]["EVERFLOW"] = None
     config_db.mod_config(allconfig)
     allconfig = config_db.get_config()
@@ -477,20 +477,20 @@ def test_ConfigDBPipeConnector():
     # Verify table delete
     for i in range(1, 1001, 1):
         # Make sure we have enough entries to trigger REDIS_SCAN_BATCH_SIZE
-        allconfig.setdefault("PORT_TABLE", {}).setdefault("Ethernet{}".format(i), {})
-        allconfig["PORT_TABLE"]["Ethernet{}".format(i)]["alias"] = "etp{}x".format(i)
+        allconfig.setdefault("PORT", {}).setdefault("Ethernet{}".format(i), {})
+        allconfig["PORT"]["Ethernet{}".format(i)]["alias"] = "etp{}x".format(i)
 
     config_db.mod_config(allconfig)
     allconfig = config_db.get_config()
-    assert len(allconfig["PORT_TABLE"]) == 1000
+    assert len(allconfig["PORT"]) == 1000
 
     # Verify modify config with {} will no action
-    config_db.mod_config({'PORT_TABLE':{}})
+    config_db.mod_config({'PORT':{}})
     allconfig = config_db.get_config()
-    assert len(allconfig["PORT_TABLE"]) == 1000
+    assert len(allconfig["PORT"]) == 1000
 
     # Verify modify config with None will delete table
-    allconfig["PORT_TABLE"] = None
+    allconfig["PORT"] = None
     config_db.mod_config(allconfig)
     allconfig = config_db.get_config()
     assert len(allconfig) == 0
@@ -514,16 +514,16 @@ def test_ConfigDBPipeConnectorSeparator():
     config_db = ConfigDBPipeConnector()
     config_db.db_connect("CONFIG_DB", False, False)
     config_db.get_redis_client(config_db.CONFIG_DB).flushdb()
-    config_db.set_entry("TEST_PORT", "Ethernet222", {"alias": "etp2x"})
+    config_db.set_entry("PORT", "Ethernet222", {"alias": "etp2x"})
     db.set("ItemWithoutSeparator", "item11")
     allconfig = config_db.get_config()
-    assert "TEST_PORT" in allconfig
+    assert "PORT" in allconfig
     assert "ItemWithoutSeparator" not in allconfig
 
     alltable = config_db.get_table("*")
     assert "Ethernet222" in alltable
 
-    config_db.delete_table("TEST_PORT")
+    config_db.delete_table("PORT")
     db.delete("ItemWithoutSeparator")
     allconfig = config_db.get_config()
     assert len(allconfig) == 0
@@ -532,10 +532,11 @@ def test_ConfigDBScan():
     config_db = ConfigDBPipeConnector()
     config_db.connect(wait_for_init=False)
     config_db.get_redis_client(config_db.CONFIG_DB).flushdb()
-    n = 1000
+    tables = ["CRM", "DEVICE_METADATA", "FEATURE", "PORT", "SNMP"]
+    n = len(tables)
     for i in range(0, n):
         s = str(i)
-        config_db.mod_entry("TEST_TYPE" + s, "Ethernet" + s, {"alias" + s: "etp" + s})
+        config_db.mod_entry(tables[i], "key" + s, {"alias" + s: "etp" + s})
 
     allconfig = config_db.get_config()
     assert len(allconfig) == n
@@ -547,12 +548,21 @@ def test_ConfigDBScan():
 
     for i in range(0, n):
         s = str(i)
-        config_db.delete_table("TEST_TYPE" + s)
+        config_db.delete_table(tables[i])
+
+
+def test_ConfigDB_non_yang_table_raise_error():
+    config_db = ConfigDBConnector()
+    config_db.connect(wait_for_init=False)
+    with pytest.raises(ValueError) as excinfo:
+        config_db.set_entry("TEST_PORT", "Ethernet111", {"alias": "etp1x"})
+    assert str(excinfo.value) == "TEST_PORT is not supported due to missing YANG model"
+
 
 def test_ConfigDBFlush():
     config_db = ConfigDBConnector()
     config_db.connect(wait_for_init=False)
-    config_db.set_entry("TEST_PORT", "Ethernet111", {"alias": "etp1x"})
+    config_db.set_entry("PORT", "Ethernet111", {"alias": "etp1x"})
     client = config_db.get_redis_client(config_db.CONFIG_DB)
 
     assert ConfigDBConnector.INIT_INDICATOR == "CONFIG_DB_INITIALIZED"
@@ -585,7 +595,7 @@ def test_multidb_ConfigDBConnector():
 
 
 def test_ConfigDBSubscribe():
-    table_name = 'TEST_TABLE'
+    table_name = 'PORT'
     test_key = 'key1'
     test_data = {'field1': 'value1'}
     global output_data
@@ -642,9 +652,9 @@ def test_ConfigDBSubscribe():
     assert table_name not in config_db.handlers
 
 def test_ConfigDBInit():
-    table_name_1 = 'TEST_TABLE_1'
-    table_name_2 = 'TEST_TABLE_2'
-    table_name_3 = 'TEST_TABLE_3'
+    table_name_1 = 'DEVICE_METADATA'
+    table_name_2 = 'FEATURE'
+    table_name_3 = 'PORT'
     test_key = 'key1'
     test_data = {'field1': 'value1', 'field2': 'value2'}
 
@@ -777,9 +787,9 @@ def test_ConfigDBWaitInit():
     config_db = ConfigDBConnector()
     config_db.db_connect(config_db.CONFIG_DB, True, False)
 
-    config_db.set_entry("TEST_PORT", "Ethernet111", {"alias": "etp1x"})
+    config_db.set_entry("PORT", "Ethernet111", {"alias": "etp1x"})
     allconfig = config_db.get_config()
-    assert allconfig["TEST_PORT"]["Ethernet111"]["alias"] == "etp1x"
+    assert allconfig["PORT"]["Ethernet111"]["alias"] == "etp1x"
 
 
 def test_ConfigDBConnector():
@@ -795,20 +805,20 @@ def test_ConfigDBConnector():
     allconfig = config_db.get_config()
     for i in range(1, 1001, 1):
         # Make sure we have enough entries to trigger REDIS_SCAN_BATCH_SIZE
-        allconfig.setdefault("PORT_TABLE", {}).setdefault("Ethernet{}".format(i), {})
-        allconfig["PORT_TABLE"]["Ethernet{}".format(i)]["alias"] = "etp{}x".format(i)
+        allconfig.setdefault("PORT", {}).setdefault("Ethernet{}".format(i), {})
+        allconfig["PORT"]["Ethernet{}".format(i)]["alias"] = "etp{}x".format(i)
 
     config_db.mod_config(allconfig)
     allconfig = config_db.get_config()
-    assert len(allconfig["PORT_TABLE"]) == 1000
+    assert len(allconfig["PORT"]) == 1000
 
     # Verify modify config with {} will no action
-    config_db.mod_config({'PORT_TABLE':{}})
+    config_db.mod_config({'PORT':{}})
     allconfig = config_db.get_config()
-    assert len(allconfig["PORT_TABLE"]) == 1000
+    assert len(allconfig["PORT"]) == 1000
 
     # Verify modify config with None will delete table
-    allconfig["PORT_TABLE"] = None
+    allconfig["PORT"] = None
     config_db.mod_config(allconfig)
     allconfig = config_db.get_config()
     assert len(allconfig) == 0
@@ -824,9 +834,9 @@ def test_ConfigDBConnector_with_statement(self):
         assert config_db.db_name == "CONFIG_DB"
         assert config_db.TABLE_NAME_SEPARATOR == "|"
         config_db.get_redis_client(config_db.CONFIG_DB).flushdb()
-        config_db.set_entry("TEST_PORT", "Ethernet111", {"alias": "etp1x"})
+        config_db.set_entry("PORT", "Ethernet111", {"alias": "etp1x"})
         allconfig = config_db.get_config()
-        assert allconfig["TEST_PORT"]["Ethernet111"]["alias"] == "etp1x"
+        assert allconfig["PORT"]["Ethernet111"]["alias"] == "etp1x"
 
     # check close() method called by with statement
     ConfigDBConnector.close.assert_called_once_with()
