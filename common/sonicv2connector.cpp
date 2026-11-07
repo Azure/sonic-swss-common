@@ -28,11 +28,10 @@ void SonicV2Connector_Native::connect(const std::string& db_name, bool retry_on)
     {
         m_dbintf.set_redis_kwargs("", get_db_hostname(db_name), get_db_port(db_name));
     }
-    int db_id = get_dbid(db_name);
     if (m_authenticate)
-        m_dbintf.connectAuthenticated(db_name, SonicDBKey(m_netns), retry_on);
+        m_dbintf.connect(db_name, SonicDBKey(m_netns), retry_on, true);
     else
-        m_dbintf.connect(db_id, db_name, retry_on);
+        m_dbintf.connect(get_dbid(db_name), db_name, retry_on);
 }
 
 void SonicV2Connector_Native::close(const std::string& db_name)

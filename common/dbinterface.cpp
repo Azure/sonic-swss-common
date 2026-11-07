@@ -9,34 +9,6 @@ using namespace std;
 using namespace std::chrono;
 using namespace swss;
 
-void DBInterface::connectAuthenticated(const std::string& dbName, const SonicDBKey& key, bool retry)
-{
-    if (dbName.empty()) throw invalid_argument("dbName");
-    const auto existing = m_redisClient.find(dbName);
-    if (existing != m_redisClient.end())
-    {
-        if (!existing->second.authenticationEnabled() || !(existing->second.getDBKey() == key))
-            throw invalid_argument("Close the existing connection before changing authentication or DB key");
-        return;
-    }
-    for (;;)
-    {
-        try
-        {
-            m_redisClient.emplace(std::piecewise_construct, std::forward_as_tuple(dbName),
-                std::forward_as_tuple(dbName, 0, false, key, true));
-            return;
-        }
-        catch (const RedisError&) { if (!retry) throw; }
-        catch (const std::system_error& error)
-        {
-            if (!retry || error.code() != std::make_error_code(std::errc::address_not_available)) throw;
-        }
-        SWSS_LOG_WARN("Retrying authenticated Redis connection in %d s", CONNECT_RETRY_WAIT_TIME);
-        sleep(CONNECT_RETRY_WAIT_TIME);
-    }
-}
-
 void DBInterface::set_redis_kwargs(std::string unix_socket_path, std::string host, int port)
 {
     m_unix_socket_path = unix_socket_path;
@@ -46,14 +18,15 @@ void DBInterface::set_redis_kwargs(std::string unix_socket_path, std::string hos
 
 void DBInterface::connect(int dbId, const std::string& dbName, bool retry)
 {
-    if (retry)
-    {
-        _persistent_connect(dbId, dbName);
-    }
-    else
-    {
-        _onetime_connect(dbId, dbName);
-    }
+    blockable<bool>([] { return true; }, dbName, false,
+        [=] { _onetime_connect(dbId, dbName); }, retry);
+}
+
+void DBInterface::connect(const std::string& dbName, const SonicDBKey& key, bool retry, bool authenticate)
+{
+    const bool isTcpConn = m_unix_socket_path.empty();
+    blockable<bool>([] { return true; }, dbName, false,
+        [=] { _onetime_connect(dbName, key, isTcpConn, authenticate); }, retry, authenticate);
 }
 
 void DBInterface::close(const std::string& dbName)
@@ -189,15 +162,22 @@ DBConnector& DBInterface::get_redis_client(const std::string& dbName)
 }
 
 template <typename T, typename FUNC>
-T DBInterface::blockable(FUNC f, const std::string& dbName, bool blocking)
+T DBInterface::blockable(FUNC f, const std::string& dbName, bool blocking,
+                        std::function<void()> connect, bool retry, bool authenticate)
 {
+    const bool connecting = static_cast<bool>(connect);
     int attempts = 0;
     for (;;)
     {
         try
         {
+            if (connect)
+            {
+                connect();
+                connect = nullptr;
+            }
             T ret_data = f();
-            _unsubscribe_keyspace_notification(dbName);
+            if (!connecting) _unsubscribe_keyspace_notification(dbName);
             return ret_data;
         }
         catch (const UnavailableDataError& e)
@@ -229,33 +209,45 @@ T DBInterface::blockable(FUNC f, const std::string& dbName, bool blocking)
             {
                 return T();
             }
+            continue;
         }
-        catch (const std::system_error&)
+        catch (const std::system_error& error)
         {
-            /*
-            Something is fundamentally wrong with the request itself.
-            Retrying the request won't pass unless the schema itself changes. In this case, the error
-            should be attributed to the application itself. Re-raise the error.
-            */
-            SWSS_LOG_ERROR("Bad DB request [%s]", dbName.c_str());
-            throw;
+            // Only opted-in connection attempts retry transport setup failures.
+            // Errors from a database operation retain their existing fail-fast behavior.
+            if (!retry || !connect || !authenticate ||
+                error.code() != std::make_error_code(std::errc::address_not_available))
+            {
+                if (!connect) SWSS_LOG_ERROR("Bad DB request [%s]", dbName.c_str());
+                throw;
+            }
         }
         catch (const RedisError&)
         {
-            // Redis connection broken and we need to retry several times
-            attempts += 1;
-            _connection_error_handler(dbName);
-            std::string msg = "DB access failure by [" + dbName + + "]";
-            if (BLOCKING_ATTEMPT_ERROR_THRESHOLD < attempts && attempts < BLOCKING_ATTEMPT_SUPPRESSION)
-            {
-                // Repeated access failures implies the database itself is unhealthy.
-                SWSS_LOG_ERROR("%s", msg.c_str());
-            }
-            else
-            {
-                SWSS_LOG_WARN("%s", msg.c_str());
-            }
+            if (!retry) throw;
         }
+
+        // Save the failed client's identity before closing it. The same factory
+        // is retained if subsequent connection attempts also fail.
+        if (!connect)
+        {
+            auto& client = get_redis_client(dbName);
+            authenticate = client.authenticationEnabled();
+            const int dbId = client.getDbId();
+            const SonicDBKey key = authenticate ? client.getDBKey() : SonicDBKey();
+            connect = [=] {
+                if (authenticate) _onetime_connect(dbName, key, false, true);
+                else _onetime_connect(dbId, dbName);
+            };
+        }
+        close(dbName);
+        sleep(CONNECT_RETRY_WAIT_TIME);
+        attempts += 1;
+        std::string msg = "DB access failure by [" + dbName + + "]";
+        if (BLOCKING_ATTEMPT_ERROR_THRESHOLD < attempts && attempts < BLOCKING_ATTEMPT_SUPPRESSION)
+            SWSS_LOG_ERROR("%s", msg.c_str());
+        else
+            SWSS_LOG_WARN("%s", msg.c_str());
     }
 }
 
@@ -342,25 +334,6 @@ void DBInterface::_subscribe_keyspace_notification(const std::string& dbName)
     keyspace_notification_channels.emplace(std::piecewise_construct, std::forward_as_tuple(dbName), std::forward_as_tuple(pubsub));
 }
 
-// In the event Redis is unavailable, close existing connections, and try again.
-void DBInterface::_connection_error_handler(const std::string& dbName)
-{
-    SWSS_LOG_WARN("Could not connect to Redis--waiting before trying again.");
-    auto& client = get_redis_client(dbName);
-    if (client.authenticationEnabled())
-    {
-        const SonicDBKey key = client.getDBKey();
-        close(dbName);
-        sleep(CONNECT_RETRY_WAIT_TIME);
-        connectAuthenticated(dbName, key, true);
-        return;
-    }
-    int dbId = client.getDbId();
-    close(dbName);
-    sleep(CONNECT_RETRY_WAIT_TIME);
-    connect(dbId, dbName, true);
-}
-
 void DBInterface::_onetime_connect(int dbId, const string& dbName)
 {
     if (dbName.empty())
@@ -382,22 +355,17 @@ void DBInterface::_onetime_connect(int dbId, const string& dbName)
     }
 }
 
-// Keep reconnecting to Database 'dbId' until success
-void DBInterface::_persistent_connect(int dbId, const string& dbName)
+void DBInterface::_onetime_connect(const std::string& dbName, const SonicDBKey& key,
+                                  bool isTcpConn, bool authenticate)
 {
-    for (;;)
+    if (dbName.empty()) throw invalid_argument("dbName");
+    const auto existing = m_redisClient.find(dbName);
+    if (existing != m_redisClient.end())
     {
-        try
-        {
-            _onetime_connect(dbId, dbName);
-            return;
-        }
-        catch (RedisError&)
-        {
-            const int wait = CONNECT_RETRY_WAIT_TIME;
-            SWSS_LOG_WARN("Connecting to DB '%s(%d)' failed, will retry in %d s", dbName.c_str(), dbId, wait);
-            close(dbName);
-            sleep(wait);
-        }
+        if (existing->second.authenticationEnabled() != authenticate || !(existing->second.getDBKey() == key))
+            throw invalid_argument("Close the existing connection before changing authentication or DB key");
+        return;
     }
+    m_redisClient.emplace(std::piecewise_construct, std::forward_as_tuple(dbName),
+        std::forward_as_tuple(dbName, 0, isTcpConn, key, authenticate));
 }

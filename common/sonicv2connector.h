@@ -61,7 +61,7 @@ private:
 
     DBInterface m_dbintf;
     bool m_use_unix_socket_path;
-    bool m_authenticate = false;
+    bool m_authenticate;
     std::string m_netns;
 };
 
